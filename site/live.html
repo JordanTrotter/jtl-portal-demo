@@ -241,7 +241,7 @@ const LINKED = {radar:['radar', 'lightning']};
 let mosaic, naipMosaic, lastTick;
 window.liveMap = map;  // the portal syncs its stand map's view with this one
 // sharp imagery first; Sentinel-2 is newer but 10 m, one click away. Inside the portal, the stand map's choice
-let base = (window !== parent && parent.portalBase && parent.portalBase()) || 'sat';
+let base = (window !== parent && parent.portalBase && parent.portalBase()) || 'naip';  // NAIP first (Waters, 2026-11-12); Esri until its mosaic is in
 function setBase() {
   const b = (base === 'recent' && !mosaic) || (base === 'naip' && !naipMosaic) ? 'sat' : base;  // each one once its mosaic is in
   ['recent', 'recent-tract'].forEach(id => map.setLayoutProperty(id, 'visibility', b === 'recent' ? 'visible' : 'none'));
@@ -338,9 +338,14 @@ $('loop').onclick = async () => {
   const tile = (m, label) => ({layer:true, url:RADAR + (m ? `&TIME=${radarTime(now, m)}` : `&t=${bust}`), label});
   const frames = [50, 40, 30, 20, 10].map(m => tile(m, `Radar ${when(-m)}`));
   frames.push(tile(0, `Radar now ${when(0)}`));
-  // about 200 mi each way, so the track is measured on every storm in the region, not just the nearest cell
-  const c = bounds.getCenter(), [x0, y0] = merc(c.lng - 3.5, c.lat - 2.9), [x1, y1] = merc(c.lng + 3.5, c.lat + 2.9);
-  const W = 700, H = Math.round(W * (y1 - y0) / (x1 - x0)), mpp = (x1 - x0) / W;
+  // the forecast covers about 500 mi each way from the tract plus whatever is on screen (Waters, 2026-11-12: zoom out
+  // in a demo and still see storms projected), kept inside the radar's US coverage. One motion vector for the whole
+  // box, so far-off storms moving a different way project less well than nearby ones (see the pySTEPS note above).
+  const c = bounds.getCenter(), v = map.getBounds();
+  const lon0 = Math.max(Math.min(c.lng - 9, v.getWest()), -127), lon1 = Math.min(Math.max(c.lng + 9, v.getEast()), -65);
+  const lat0 = Math.max(Math.min(c.lat - 7, v.getSouth()), 22), lat1 = Math.min(Math.max(c.lat + 7, v.getNorth()), 50);
+  const [x0, y0] = merc(lon0, lat0), [x1, y1] = merc(lon1, lat1);
+  const W = 1200, H = Math.round(W * (y1 - y0) / (x1 - x0)), mpp = (x1 - x0) / W;
   let cast;
   try {
     const [then, cur] = await Promise.all([radarImage(20, [x0, y0, x1, y1], W, H), radarImage(0, [x0, y0, x1, y1], W, H)]);
