@@ -1,0 +1,25 @@
+# Copied into the Pages repo as .github/workflows/live.yml by build_portal.py --publish.
+# Pulls the live feeds, encrypts status.json with LIVE_KEY, deploys site/ to Pages. No commits, so the repo never grows.
+name: live
+on:
+  schedule: [{cron: "*/15 * * * *"}]  # GitHub runs these late under load, often 5-15 min
+  workflow_dispatch:
+  push: {branches: [main]}
+permissions: {contents: read, pages: write, id-token: write}
+concurrency: {group: pages, cancel-in-progress: true}
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: {name: github-pages, url: "${{ steps.d.outputs.page_url }}"}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.14"}
+      - run: pip install -q cryptography h5py sgp4 pillow
+      - run: python live_job.py site
+        env: {LIVE_KEY: "${{ secrets.LIVE_KEY }}"}
+      - uses: actions/upload-pages-artifact@v3
+        with: {path: site}
+      - id: d
+        uses: actions/deploy-pages@v4

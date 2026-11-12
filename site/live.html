@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live Property Map</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+:root{--bg:#14181c;--card:#1d2329;--line:#333c45;--text:#eef1f3;--dim:#a3adb6;--clear:#3f9b63;--watch:#d99a2b;--warn:#d4483b;--unknown:#6d7883}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px/1.4 system-ui,Segoe UI,sans-serif}
+#app{display:grid;grid-template-columns:380px 1fr;height:100%}
+#panel{overflow-y:auto;border-right:1px solid var(--line)}
+#mapwrap{position:relative;height:100%;min-height:320px}
+#map{height:100%}
+#layer-panel{position:absolute;top:10px;right:10px;z-index:900;background:#fff;color:#111;border-radius:4px;box-shadow:0 1px 5px rgba(0,0,0,.4);font:13px/1.4 system-ui,sans-serif;padding:8px 10px;width:220px;max-height:calc(100% - 50px);overflow-y:auto}
+#layer-panel label{display:block;margin:3px 0;cursor:pointer}
+#layer-panel .basemaps{border-bottom:1px solid #ddd;margin-bottom:6px;padding-bottom:6px}
+#layer-panel button.base-btn{display:inline-block;margin:2px 4px 2px 0;padding:3px 8px;border:1px solid #999;border-radius:3px;background:#f4f4f4;color:#111;cursor:pointer;font-size:12px}
+#layer-panel button.base-btn.active{background:#ff7a00;color:#111;border-color:#ff7a00}
+#layer-panel .note{color:#555;font-size:11px;margin-top:4px}
+#layer-panel .keys{font-size:12px;color:#333;margin:6px 0;border-top:1px solid #ddd;padding-top:6px}
+#layer-panel .keys span{display:block}
+header{padding:14px 16px}
+h1{font-size:18px;margin:0}
+.sub{color:var(--dim);font-size:12px}
+#status{padding:12px 16px;font-weight:700;font-size:20px}
+#status small{display:block;font-weight:400;font-size:13px;margin-top:2px}
+.Clear{background:var(--clear)}.Watch{background:var(--watch);color:#1a1405}.Warning{background:var(--warn)}.Unknown{background:var(--unknown)}
+section{padding:12px 16px;border-top:1px solid var(--line)}
+h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);margin:0 0 8px;display:flex;justify-content:space-between;gap:8px}
+h2 span{text-transform:none;letter-spacing:0;font-weight:400}
+h2 .stale{color:var(--watch);font-weight:700}
+dl{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;margin:0}
+dt{color:var(--dim);font-size:12px}
+dd{margin:0;font-size:15px;font-weight:600}
+.row{padding:6px 0;border-bottom:1px solid var(--line)}
+.row:last-child{border:0}
+summary{cursor:pointer}
+summary h2{display:inline-flex;width:calc(100% - 20px);margin:0}
+#danger .badge{display:inline-block;padding:4px 14px;border-radius:4px;font-size:20px;font-weight:700;margin-bottom:6px}
+.VeryLow,.Low{background:var(--clear)}.VeryHigh{background:#d4583b}.Moderate{background:var(--watch);color:#1a1405}.High{background:#e0702a;color:#1a1405}.Extreme{background:var(--warn)}
+.row b{display:block}
+button.row{display:block;width:100%;background:none;color:inherit;font:inherit;text-align:left;border:0;border-bottom:1px solid var(--line);cursor:pointer}
+button.row:hover,button.row:focus-visible{background:var(--line)}
+.row span{color:var(--dim);font-size:12px}
+.none{color:var(--dim)}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+.layers label{display:block;padding:3px 0}
+.fc{display:grid;grid-template-columns:1fr auto;gap:2px 8px;padding:5px 0;border-bottom:1px solid var(--line)}
+.fc:last-child{border:0}
+@media(max-width:800px){#app{grid-template-columns:1fr;grid-template-rows:45vh auto;height:auto}#mapwrap{grid-row:1;height:45vh}#layer-panel{width:190px}#panel{grid-row:2;border:0;overflow:visible}}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="panel">
+    <a href="https://jordantrotter.com/services/land-management/" target="_blank" rel="noopener"><img src="logo.png" alt="Jordan Trotter Land" style="height:36px;display:block;margin-bottom:10px"></a>
+    <header style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start"><div><h1 id="name">Live Map</h1><select id="pick" style="display:none;font-size:20px;font-weight:700;background:none;color:inherit;border:0;padding:0;cursor:pointer"></select><div class="sub" id="where">Loading...</div></div><div style="text-align:right"><button id="reload" style="background:#ffe047;color:#111;border:0;border-radius:4px;padding:6px 12px;font-weight:600;cursor:pointer">Reload</button><div class="sub" id="updated"></div></div></header>
+    <div id="status" class="Unknown">Checking...</div>
+    <section><h2>Wildfire risk today <span id="t-fire_class"></span></h2><div id="danger"></div></section>
+    <section><h2>Alerts <span id="t-nws"></span></h2><div id="alerts"></div></section>
+    <section><h2>Current conditions <span id="t-raws"></span></h2><dl id="now"></dl><div class="sub" id="station" style="margin-top:6px"></div></section>
+    <section><h2>Next 24 hours</h2><dl id="fw"></dl></section>
+    <section><details id="fire-box"><summary><h2><div>Fires and burns within 25 mi (<i id="fire-n" style="font-style:normal">0</i>)</div><span id="t-fires"></span></h2></summary><div class="sub" style="margin:6px 0">Click one to see it on the map.</div><div id="fires"></div></details></section>
+    <section><h2>Lightning <span id="t-lightning"></span></h2><div id="lightning"></div></section>
+    <section><h2>Burn status <span id="t-burn"></span></h2><div id="burn"></div></section>
+    <section><h2>Tropical storms <span id="t-storms"></span></h2><div id="storms"></div></section>
+    <section><details id="climate-box"><summary><h2><div>Drought and outlook <span class="sub" id="climate-sum"></span></div><span id="t-climate"></span></h2></summary><dl id="drought" style="margin-top:6px"></dl><div class="sub">Outlooks are NOAA odds of above or below normal, not amounts.</div></details></section>
+    <section><h2>Forecast</h2><div id="fc"></div></section>
+  </div>
+  <div id="mapwrap">
+    <div id="map"></div>
+    <div id="layer-panel">
+      <div class="basemaps">
+        <button class="base-btn active" data-base="sat">Esri high resolution</button>
+        <button class="base-btn" data-base="recent" id="s2-label">Sentinel-2</button>
+        <div class="note" id="base-note"></div>
+      </div>
+      <b>Live</b>
+      <label><input type="checkbox" id="lyr-fire" checked> Fire</label>
+      <div style="display:flex;align-items:center;gap:6px"><label><input type="checkbox" id="lyr-radar" checked> Radar</label><button id="loop" title="Play radar loop" style="border:0;background:none;cursor:pointer;padding:0 2px;font-size:13px;line-height:1">&#9654;</button></div>
+      <div id="loop-bar" style="display:none;margin:2px 0 4px"><div style="display:flex;align-items:center;gap:4px"><input type="range" id="loop-slider" min="0" step="1" style="flex:1"><button id="loop-close" title="Back to live radar" style="border:0;background:none;cursor:pointer;padding:0 2px">&#10005;</button></div><div class="note" id="loop-label"></div></div>
+      <label><input type="checkbox" id="lyr-clouds"> Clouds (GOES)</label>
+      <label><input type="checkbox" id="lyr-wind" checked> Wind flow <span class="note" id="wind-note"></span></label>
+      <div class="keys">
+        <span><i class="dot" style="background:#ff3b30"></i>Wildfire, or fire on 2 satellite passes</span>
+        <span><i class="dot" style="background:#ff2d92"></i>Prescribed fire</span>
+        <span><i class="dot" style="background:#ff9f0a"></i>Reported burn</span>
+        <span><i class="dot" style="background:#ffd60a"></i>Possible fire, 1 satellite pass</span>
+        <span><i class="dot" style="background:#8e8e93"></i>Out, contained, or long-running heat</span>
+        <span><svg width="12" height="14" viewBox="4 0 18 28" style="margin-right:4px;vertical-align:-2px"><path d="M15 1L5 15h7L8 27 21 10h-8l6-9z" fill="#ffe600" stroke="#000" stroke-width="1.5"/></svg>Lightning flash</span>
+      </div>
+      <button class="base-btn" id="zoom">Show 25 mile area</button>
+      <button class="base-btn" id="weather">Weather view</button>
+    </div>
+  </div>
+</div>
+<script>window.fetch = parent.portalFetch;</script>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const show = (v, unit='') => v === null || v === undefined ? '--' : esc(v) + unit;
+const clock = s => new Date(s).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'});
+const facts = pairs => pairs.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+// NOAA MRMS quality-controlled base reflectivity: every radar merged, clutter, birds and false echoes removed, 2 min steps,
+// about 1 km. Public domain, no key. The service keeps about 2 hours, so the loop's past frames ask for a TIME.
+const MRMS = 'https://opengeo.ncep.noaa.gov/geoserver/conus/conus_bref_qcd/ows?service=WMS&version=1.3.0&request=GetMap&layers=conus_bref_qcd&styles=&format=image/png&transparent=true&crs=EPSG:3857';
+const RADAR = MRMS + '&width=256&height=256&bbox={bbox-epsg-3857}';
+const radarTime = (now, m) => new Date(now - m * 60000).toISOString().slice(0, 19) + 'Z';
+
+const GIBS = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/';
+const CLOUDS = (GIBS + 'GOES-East_ABI_GeoColor/default/default/GoogleMapsCompatible_Level7/{z}/{y}/{x}.png').replace('https://', 'cloudonly://');
+// GOES tiles are a full ground picture. Keep the bright, near-white pixels and fade the rest, so the basemap stays sharp.
+// ponytail: brightness cutoffs, tune LOW and HIGH if pale fields show as cloud or thin cloud vanishes
+const CLOUD_LOW = 105, CLOUD_HIGH = 185;
+maplibregl.addProtocol('cloudonly', async params => {
+  const res = await fetch(params.url.replace('cloudonly://', 'https://'));
+  if (!res.ok) throw new Error('cloud tile ' + res.status);
+  const bmp = await createImageBitmap(await res.blob());
+  const cv = new OffscreenCanvas(bmp.width, bmp.height), ctx = cv.getContext('2d');
+  ctx.drawImage(bmp, 0, 0);
+  const img = ctx.getImageData(0, 0, bmp.width, bmp.height), px = img.data;
+  for (let i = 0; i < px.length; i += 4) {
+    const low = Math.min(px[i], px[i + 1], px[i + 2]);
+    px[i + 3] = 255 * Math.max(0, Math.min(1, (low - CLOUD_LOW) / (CLOUD_HIGH - CLOUD_LOW)));
+    px[i] = px[i + 1] = px[i + 2] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  return {data: await (await cv.convertToBlob({type:'image/png'})).arrayBuffer()};
+});
+const mosaicTile = id => `https://planetarycomputer.microsoft.com/api/data/v1/mosaic/${id}/tiles/WebMercatorQuad/{z}/{x}/{y}@1x?collection=sentinel-2-l2a&assets=visual&asset_bidx=visual%7C1%2C2%2C3&nodata=0&rescale=0,150&pixel_selection=first`;
+const BLANK = 'data:,';
+// [w, s, e, n] 50 mi around the property, filled in by the server. Only Sentinel-2 uses it: its tiles are the slowest and it hides below z8.
+// Radar is unbounded: a screen holds about the same number of tiles at any zoom, so a box only saved tiles when zoomed far out.
+// properties the server runs, [{p, name}]; one property shows a plain title, several show a dropdown
+const PROPS = parent.LIVE_CFG.props, P = new URLSearchParams(location.search).get('p') || '', Q = P ? '?p=' + encodeURIComponent(P) : '';
+// the tract's own bounding box: the tract-checked Sentinel-2 image only draws here, the regional fill shows elsewhere
+const TRACT = parent.LIVE_CFG.tract;
+const AREA = parent.LIVE_CFG.area, inArea = AREA ? {bounds:AREA} : {};
+
+// a big tile cache keeps zoomed-past tiles in memory, so zooming back out is instant
+const map = new maplibregl.Map({container:'map', attributionControl:{compact:true}, maxTileCacheSize:3000, style:{version:8, sources:{
+  sat:{type:'raster', tiles:['https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'], tileSize:256, maxzoom:19, attribution:'Imagery &copy; Esri'},
+  // Esri switches to a greener mosaic at z10 and below, which showed as a box while z11 tiles loaded.
+  // USGS NAIP matches Esri's z11+ look, so it covers the zoomed-out views instead.
+  usgs:{type:'raster', tiles:['https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}'], tileSize:256, maxzoom:16, attribution:'Imagery: USGS NAIP'},
+  recent:{type:'raster', tiles:[BLANK], tileSize:256, ...inArea, attribution:'Sentinel-2: ESA, Microsoft Planetary Computer'},
+  'recent-tract':{type:'raster', tiles:[BLANK], tileSize:256, ...(TRACT ? {bounds:TRACT} : inArea)},
+  // clouds stay unbounded so a hurricane's cloud shield shows from far out; at maxzoom 7 they are few tiles
+  clouds:{type:'raster', tiles:[CLOUDS], tileSize:256, maxzoom:7, attribution:'GOES: NASA GIBS'},
+  // radar is about 1 km per pixel; past z10 the map scales the z10 tile up instead of asking NOAA again
+  radar:{type:'raster', tiles:[RADAR], tileSize:256, maxzoom:10, attribution:'Radar: NOAA MRMS'},
+  lightning:{type:'geojson', data:{type:'FeatureCollection', features:[]}},
+  boundary:{type:'geojson', data:'/boundary.geojson' + Q},
+  fire:{type:'geojson', data:{type:'FeatureCollection', features:[]}}
+}, layers:[
+  {id:'usgs', type:'raster', source:'usgs', maxzoom:11},
+  {id:'sat', type:'raster', source:'sat', minzoom:11},
+  {id:'recent', type:'raster', source:'recent', minzoom:8, layout:{visibility:'none'}},
+  {id:'recent-tract', type:'raster', source:'recent-tract', minzoom:8, layout:{visibility:'none'}},
+  {id:'clouds', type:'raster', source:'clouds', layout:{visibility:'none'}, paint:{'raster-opacity':.85, 'raster-fade-duration':0, 'raster-resampling':'linear'}},
+  {id:'radar', type:'raster', source:'radar', paint:{'raster-opacity':.65}},
+  {id:'boundary', type:'line', source:'boundary', paint:{'line-color':'#ff1f1f', 'line-width':3}},
+  {id:'fire', type:'circle', source:'fire', paint:{
+    'circle-radius':['match',['get','kind'],'wildfire',9,7],
+    'circle-color':['case',['get','out'],'#8e8e93',['get','confirmed'],'#ff3b30',['match',['get','kind'],'wildfire','#ff3b30','rx','#ff2d92','burn','#ff9f0a','#ffd60a']],
+    'circle-stroke-color':'#000', 'circle-stroke-width':1.5}},
+  {id:'lightning', type:'symbol', source:'lightning', layout:{'icon-image':'bolt', 'icon-allow-overlap':true, 'icon-size':1}}
+]}});
+map.addControl(new maplibregl.NavigationControl(), 'top-left');
+
+// drawn as an image, so the map needs no font files
+const BOLT = [[15,1],[5,15],[12,15],[8,27],[21,10],[13,10],[19,1]];
+map.on('styleimagemissing', e => {
+  if (e.id !== 'bolt' || map.hasImage('bolt')) return;
+  const cv = document.createElement('canvas'), ctx = cv.getContext('2d');
+  cv.width = cv.height = 56;
+  ctx.scale(2, 2);
+  ctx.beginPath();
+  BOLT.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+  ctx.closePath();
+  ctx.fillStyle = '#ffe600';
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 1.5;
+  ctx.lineJoin = 'round';
+  ctx.fill();
+  ctx.stroke();
+  map.addImage('bolt', ctx.getImageData(0, 0, 56, 56), {pixelRatio:2});
+});
+
+let bounds;
+map.on('load', async () => {
+  const gj = await (await fetch('/boundary.geojson' + Q)).json();
+  bounds = new maplibregl.LngLatBounds();
+  const walk = c => typeof c[0] === 'number' ? bounds.extend(c) : c.forEach(walk);
+  gj.features.forEach(f => walk(f.geometry.coordinates));
+  map.fitBounds(bounds, {padding:40, duration:0});
+  refresh();
+  map.once('idle', prefetchTract);
+});
+
+// Warm the browser cache with Esri tiles over the property, z12-17 (about 770 tiles for a 2,500 ac tract).
+// Esri sends a 24 h cache header, so zooming around the tract then reads from disk, not the network.
+// ponytail: tract box only, 4 at a time; widen PREFETCH_PAD or add z18 (about 4x the tiles) if needed
+const PREFETCH_ZOOMS = [12, 13, 14, 15, 16, 17], PREFETCH_PAD = 0.01, PREFETCH_MAX = 1500;
+async function prefetchTract() {
+  const tile = (lng, lat, z) => { const n = 2 ** z, r = lat * Math.PI / 180;
+    return [Math.floor((lng + 180) / 360 * n), Math.floor((1 - Math.asinh(Math.tan(r)) / Math.PI) / 2 * n)]; };
+  const urls = [];
+  for (const z of PREFETCH_ZOOMS) {
+    const [x0, y0] = tile(bounds.getWest() - PREFETCH_PAD, bounds.getNorth() + PREFETCH_PAD, z);
+    const [x1, y1] = tile(bounds.getEast() + PREFETCH_PAD, bounds.getSouth() - PREFETCH_PAD, z);
+    for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++)
+      urls.push(`https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`);
+  }
+  const queue = urls.slice(0, PREFETCH_MAX);
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  // browsers allow about 6 connections per host; yield them to on-screen tiles whenever the map is busy
+  const worker = async () => { while (queue.length) {
+    while (map.isMoving() || !map.areTilesLoaded()) await sleep(300);
+    await fetch(queue.shift()).then(r => r.blob()).catch(() => {});
+  } };
+  await Promise.all([worker(), worker()]);
+}
+// lightning rides with radar: one toggle shows the storm and its flashes
+const LINKED = {radar:['radar', 'lightning']};
+['fire', 'radar', 'clouds'].forEach(id => $('lyr-' + id).onchange = e => (LINKED[id] || [id]).forEach(l => map.setLayoutProperty(l, 'visibility', e.target.checked ? 'visible' : 'none')));
+let mosaic, lastTick;
+let base = 'sat';  // sharp imagery first; Sentinel-2 is newer but 10 m, one click away
+function setBase() {
+  const recent = mosaic && base === 'recent';
+  ['recent', 'recent-tract'].forEach(id => map.setLayoutProperty(id, 'visibility', recent ? 'visible' : 'none'));
+  map.setLayoutProperty('sat', 'visibility', recent ? 'none' : 'visible');  // USGS fills below z8 in Sentinel mode
+  document.querySelectorAll('[data-base]').forEach(b => b.classList.toggle('active', b.dataset.base === (recent ? 'recent' : 'sat')));
+}
+document.querySelectorAll('[data-base]').forEach(b => b.onclick = () => { base = b.dataset.base; setBase(); });
+$('weather').onclick = () => {
+  ['clouds', 'radar', 'lightning'].forEach(id => { if ($('lyr-' + id)) $('lyr-' + id).checked = true; map.setLayoutProperty(id, 'visibility', 'visible'); });
+  wide = true;
+  $('zoom').textContent = 'Back to property';
+  map.flyTo({center:bounds.getCenter(), zoom:5.3});
+};
+let wide = false;
+$('zoom').onclick = () => {
+  wide = !wide;
+  $('zoom').textContent = wide ? 'Back to property' : 'Show 25 mile area';
+  if (!wide) return map.fitBounds(bounds, {padding:40});
+  const c = bounds.getCenter(), dy = 25 / 69, dx = dy / Math.cos(c.lat * Math.PI / 180);
+  map.fitBounds([[c.lng - dx, c.lat - dy], [c.lng + dx, c.lat + dy]], {padding:20});
+};
+
+// Radar loop on demand: last 50 min of MRMS, then a projection out 2 hr.
+// ponytail: one motion vector for the whole region. Upgrade path once the always-on server runs: pySTEPS
+// (BSD, offline) Lucas-Kanade optical flow + semi-Lagrangian advection on the server, so storms can move different ways.
+let loop;
+// Future: the live radar image slid along the storms' own track, measured by matching the radar 20 min ago to now
+// (what most weather apps show as future radar). One picture moving, so it stays continuous; storms keep their shape,
+// no growth, decay or new cells. The HRRR model was tried after 60 min and dropped: its storms sit in its own places, so it jumped.
+const NOW_STEPS = Array.from({length:24}, (_, i) => (i + 1) * 5);  // every 5 min out to 2 hr
+const R = 6378137, merc = (lon, lat) => [lon * Math.PI / 180 * R, Math.log(Math.tan((90 + lat) * Math.PI / 360)) * R];
+const unmerc = (x, y) => [x / R * 180 / Math.PI, Math.atan(Math.exp(y / R)) * 360 / Math.PI - 90];
+async function radarImage(minutesAgo, box, w, h) {
+  const now = Date.now(), when = minutesAgo ? `&TIME=${radarTime(now, minutesAgo)}` : `&t=${Math.floor(now / 120000)}`;
+  const url = `${MRMS}&bbox=${box.join(',')}&width=${w}&height=${h}${when}`;
+  const blob = await (await fetch(url)).blob(), bmp = await createImageBitmap(blob);
+  const cv = new OffscreenCanvas(w, h), ctx = cv.getContext('2d');
+  ctx.drawImage(bmp, 0, 0);
+  const px = ctx.getImageData(0, 0, w, h).data, mask = new Uint8Array(w * h);
+  for (let i = 0; i < mask.length; i++) mask[i] = px[i * 4 + 3] > 40 ? 1 : 0;
+  return {url: URL.createObjectURL(blob), mask};
+}
+// best (dx, dy) in pixels that lays the old echoes on the new ones; coarse 4 px search, then a 1 px refine
+function motion(a, b, w, h) {
+  const score = (dx, dy, step) => { let s = 0;
+    for (let y = Math.max(0, -dy); y < Math.min(h, h - dy); y += step) for (let x = Math.max(0, -dx); x < Math.min(w, w - dx); x += step) s += a[y * w + x] & b[(y + dy) * w + x + dx];
+    return s; };
+  let best = [0, 0], top = -1;
+  for (let dy = -60; dy <= 60; dy += 4) for (let dx = -60; dx <= 60; dx += 4) { const s = score(dx, dy, 4); if (s > top) { top = s; best = [dx, dy]; } }
+  const [cx, cy] = best; top = -1;
+  for (let dy = cy - 3; dy <= cy + 3; dy++) for (let dx = cx - 3; dx <= cx + 3; dx++) { const s = score(dx, dy, 2); if (s > top) { top = s; best = [dx, dy]; } }
+  return best;
+}
+function showFrame(i) {
+  const old = loop.frames[loop.i], fr = loop.frames[i];
+  if (old.layer && old !== fr) map.setPaintProperty(old.layer, 'raster-opacity', 0);
+  if (old.shift && !fr.shift) map.setPaintProperty('nowcast', 'raster-opacity', 0);
+  if (fr.shift) map.getSource('nowcast').setCoordinates(fr.shift);  // the projected hour is one image, slid along the track
+  map.setPaintProperty(fr.layer || 'nowcast', 'raster-opacity', .65);
+  loop.i = i;
+  $('loop-slider').value = i;
+  $('loop-label').textContent = fr.label;
+}
+function play(on) {
+  clearInterval(loop.timer);
+  if (on && loop.i >= loop.frames.length - 1) showFrame(loop.now);
+  loop.timer = on && setInterval(() => {
+    if (loop.hold-- > 0) return;  // pause on the last frame, then start again from now, never from the past
+    showFrame(loop.i >= loop.frames.length - 1 || loop.i < loop.now ? loop.now : loop.i + 1);
+    if (loop.i === loop.frames.length - 1) loop.hold = 4;
+  }, 450);
+  $('loop').innerHTML = on ? '&#10074;&#10074;' : '&#9654;';
+}
+function stopLoop() {
+  play(false);
+  loop.frames.forEach(f => f.layer && (map.removeLayer(f.layer), map.removeSource(f.layer)));
+  if (map.getLayer('nowcast')) { map.removeLayer('nowcast'); map.removeSource('nowcast'); }
+  URL.revokeObjectURL(loop.img);
+  loop = undefined;
+  map.setLayoutProperty('radar', 'visibility', $('lyr-radar').checked ? 'visible' : 'none');
+  $('loop-bar').style.display = 'none';
+}
+$('loop-close').onclick = stopLoop;
+$('loop-slider').oninput = e => { play(false); showFrame(+e.target.value); };  // dragging pauses on that time, past or future
+$('loop').onclick = async () => {
+  if (loop) return play(!loop.timer);
+  $('loop').innerHTML = '&#8230;';
+  const now = Date.now(), bust = Math.floor(now / 300000), when = m => new Date(now + m * 60000).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
+  const tile = (m, label) => ({layer:true, url:RADAR + (m ? `&TIME=${radarTime(now, m)}` : `&t=${bust}`), label});
+  const frames = [50, 40, 30, 20, 10].map(m => tile(m, `Radar ${when(-m)}`));
+  frames.push(tile(0, `Radar now ${when(0)}`));
+  // about 200 mi each way, so the track is measured on every storm in the region, not just the nearest cell
+  const c = bounds.getCenter(), [x0, y0] = merc(c.lng - 3.5, c.lat - 2.9), [x1, y1] = merc(c.lng + 3.5, c.lat + 2.9);
+  const W = 700, H = Math.round(W * (y1 - y0) / (x1 - x0)), mpp = (x1 - x0) / W;
+  let cast;
+  try {
+    const [then, cur] = await Promise.all([radarImage(20, [x0, y0, x1, y1], W, H), radarImage(0, [x0, y0, x1, y1], W, H)]);
+    const [dx, dy] = motion(then.mask, cur.mask, W, H);
+    cast = {img: cur.url, dx, dy};
+    URL.revokeObjectURL(then.url);
+  } catch {}
+  if (cast) {
+    NOW_STEPS.forEach(m => {
+      const sx = cast.dx * mpp * m / 20, sy = -cast.dy * mpp * m / 20;  // image rows run south, mercator y runs north
+      const nw = unmerc(x0 + sx, y1 + sy), ne = unmerc(x1 + sx, y1 + sy), se = unmerc(x1 + sx, y0 + sy), sw = unmerc(x0 + sx, y0 + sy);
+      frames.push({shift:[nw, ne, se, sw], label:`Projected ${when(m)}`});
+    });
+    map.addSource('nowcast', {type:'image', url:cast.img, coordinates:frames[frames.length - 1].shift});
+    map.addLayer({id:'nowcast', type:'raster', source:'nowcast', paint:{'raster-opacity':0, 'raster-fade-duration':0}}, 'fire');
+  }
+  frames.filter(f => f.layer).forEach((f, i) => {
+    f.layer = 'loop' + i;
+    map.addSource(f.layer, {type:'raster', tiles:[f.url], tileSize:256, maxzoom:10});
+    map.addLayer({id:f.layer, type:'raster', source:f.layer, paint:{'raster-opacity':0, 'raster-fade-duration':0, 'raster-opacity-transition':{duration:300, delay:0}}}, 'fire');
+  });
+  // every frame loads before playing, so the loop never stutters on a half-drawn frame; give up waiting after 10 s
+  for (let t = 0; t < 50 && !frames.every(f => !f.layer || map.isSourceLoaded(f.layer)); t++) await new Promise(r => setTimeout(r, 200));
+  map.setLayoutProperty('radar', 'visibility', 'none');
+  loop = {frames, now: 5, i: 5, hold: 0, img: cast?.img};
+  $('loop-slider').max = frames.length - 1;
+  $('loop-bar').style.display = '';
+  showFrame(5);
+  play(true);
+};
+
+let popup;
+const coords = (lat, lon) => `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+function pin(lngLat, title, text, link) {
+  popup?.remove();
+  const ll = maplibregl.LngLat.convert(lngLat), xy = coords(ll.lat, ll.lng);
+  popup = new maplibregl.Popup().setLngLat(ll).setHTML(`<b style="color:#111">${esc(title)}</b>` + (text ? `<div style="color:#333">${esc(text)}</div>` : '') +
+    `<div style="color:#333;margin-top:4px">${xy} <button class="copy" style="font-size:11px;cursor:pointer">Copy</button></div>` +
+    (link ? `<div style="margin-top:4px"><a href="${esc(link)}" target="_blank" rel="noopener">Open on ${link.includes('scfc') ? 'SCFC' : 'GFC'} fire map</a></div>` : '')).addTo(map);
+  popup.getElement().querySelector('.copy').onclick = e => navigator.clipboard.writeText(xy).then(() => e.target.textContent = 'Copied');
+}
+map.on('click', 'fire', e => { const p = e.features[0].properties; pin(e.features[0].geometry.coordinates, p.title, p.detail, p.link); });
+map.on('mouseenter', 'fire', () => map.getCanvas().style.cursor = 'pointer');
+map.on('contextmenu', e => pin(e.lngLat, 'Coordinates', ''));
+
+// Click anywhere for rain at that spot: NWS precipitation analysis (radar plus gauges), public domain, no key.
+// Image layers 28, 40, 56 = last 1, 3, 7 days; same ids as QPE_LAYERS in live_map.py.
+const QPE = 'https://mapservices.weather.noaa.gov/raster/rest/services/obs/rfc_qpe/MapServer/identify?geometryType=esriGeometryPoint&sr=4326&layers=all:28,40,56&tolerance=1&imageDisplay=400,400,96&returnGeometry=false&f=json';
+const QPE_SPAN = {28:'1 day', 40:'3 days', 56:'1 week'};
+map.on('click', async e => {
+  if (map.queryRenderedFeatures(e.point, {layers:['fire']}).length) return;
+  const {lat, lng} = e.lngLat;
+  pin(e.lngLat, 'Rain', 'Loading...');
+  let w;
+  const x = lng.toFixed(3), y = lat.toFixed(3);
+  try { w = await (await fetch(`${QPE}&geometry=${x},${y}&mapExtent=${x - 1},${y - 1},${+x + 1},${+y + 1}`)).json(); } catch {}
+  if (!w?.results) return pin(e.lngLat, 'Rain', 'Unavailable');
+  const val = {};
+  w.results.forEach(r => { const v = parseFloat(r.attributes['Service Pixel Value']); val[r.layerId] = isNaN(v) ? 'No data' : v.toFixed(2) + ' in'; });
+  const past = id => val[id] || 'No data';
+  popup?.remove();
+  popup = new maplibregl.Popup().setLngLat(e.lngLat).setHTML(`<div style="color:#111"><b>Rain</b> <select class="rain-span" style="font-size:12px">` +
+    Object.entries(QPE_SPAN).map(([id, t]) => `<option value="${id}">${t}</option>`).join('') + '</select>' +
+    `<div class="rain-val" style="font-size:16px;font-weight:600;margin-top:4px">${past(28)}</div></div>`).addTo(map);
+  const el = popup.getElement();
+  el.querySelector('.rain-span').onchange = ev => el.querySelector('.rain-val').textContent = past(+ev.target.value);
+});
+
+// --- wind flow: particles drift with the current 10 m wind grid from the server
+let wind;
+function windAt(lng, lat) {
+  if (!wind) return null;
+  const {lats, lons, u, v} = wind, n = lons.length;
+  const i = (lat - lats[0]) / (lats[1] - lats[0]), j = (lng - lons[0]) / (lons[1] - lons[0]);
+  if (i < 0 || j < 0 || i > lats.length - 1 || j > n - 1) return null;
+  const i0 = Math.min(Math.floor(i), lats.length - 2), j0 = Math.min(Math.floor(j), n - 2), a = i - i0, b = j - j0;
+  const mix = g => (g[i0 * n + j0] * (1 - b) + g[i0 * n + j0 + 1] * b) * (1 - a) + (g[(i0 + 1) * n + j0] * (1 - b) + g[(i0 + 1) * n + j0 + 1] * b) * a;
+  return [mix(u), mix(v)];
+}
+const DIRS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+const toward = (u, v) => DIRS[Math.round(((Math.atan2(u, v) * 180 / Math.PI) + 360) % 360 / 45) % 8];
+const windText = f => { const w = windAt(f.lon, f.lat); if (!w) return ''; const [u, v] = w;
+  return `Wind ${Math.round(Math.hypot(u, v))} mph from ${toward(-u, -v)}, pushing ${toward(u, v)}`; };
+const windCv = document.createElement('canvas');
+windCv.style.cssText = 'position:absolute;inset:0;pointer-events:none';
+map.getCanvasContainer().insertAdjacentElement('afterend', windCv);
+const wctx = windCv.getContext('2d');
+// ponytail: PX_PER_MPH sets drift speed, PARTICLES the density; tune by eye
+const PX_PER_MPH = 0.25, PARTICLES = 1800, MAX_AGE = 90;
+let parts = [];
+const spawn = () => ({x: Math.random() * windCv.clientWidth, y: Math.random() * windCv.clientHeight, age: Math.random() * MAX_AGE});
+function sizeWind() {
+  const r = devicePixelRatio || 1, c = map.getCanvas();
+  windCv.width = c.clientWidth * r; windCv.height = c.clientHeight * r;
+  windCv.style.width = c.clientWidth + 'px'; windCv.style.height = c.clientHeight + 'px';
+  wctx.setTransform(r, 0, 0, r, 0, 0);
+  parts = Array.from({length: PARTICLES}, spawn);
+}
+map.on('resize', sizeWind); map.on('load', sizeWind);
+map.on('movestart', () => wctx.clearRect(0, 0, windCv.width, windCv.height));
+map.on('moveend', () => parts = parts.map(spawn));
+function drawWind() {
+  requestAnimationFrame(drawWind);
+  if (!$('lyr-wind').checked || !wind) return wctx.clearRect(0, 0, windCv.width, windCv.height);
+  if (map.isMoving()) return;
+  wctx.globalCompositeOperation = 'destination-in';
+  wctx.fillStyle = 'rgba(0,0,0,0.93)';
+  wctx.fillRect(0, 0, windCv.width, windCv.height);
+  wctx.globalCompositeOperation = 'source-over';
+  wctx.strokeStyle = 'rgba(255,255,255,0.85)';
+  wctx.lineWidth = 1.3;
+  wctx.beginPath();
+  for (const p of parts) {
+    const ll = map.unproject([p.x, p.y]), w = windAt(ll.lng, ll.lat);
+    if (!w || ++p.age > MAX_AGE) { Object.assign(p, spawn(), {age: 0}); continue; }
+    const nx = p.x + w[0] * PX_PER_MPH, ny = p.y - w[1] * PX_PER_MPH;
+    wctx.moveTo(p.x, p.y); wctx.lineTo(nx, ny);
+    p.x = nx; p.y = ny;
+  }
+  wctx.stroke();
+}
+drawWind();
+map.on('mouseleave', 'fire', () => map.getCanvas().style.cursor = '');
+let fires = [], flashes = [];
+function flyTo(at, title, text, zoom = 13, link) {
+  wide = true;
+  $('zoom').textContent = 'Back to property';
+  map.flyTo({center:at, zoom});
+  pin(at, title, text, link);
+  $('map').scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+$('fires').onclick = e => { const b = e.target.closest('button[data-i]'); if (!b) return; const f = fires[+b.dataset.i]; flyTo([f.lon, f.lat], label(f), detail(f), 13, f.link); };
+$('lightning').onclick = e => { if (!e.target.closest('button') || !flashes[0]) return; const f = flashes[0]; flyTo([f.lon, f.lat], 'Closest lightning flash', flashText(f), 10); };
+
+const heatName = f => f.long_run ? 'Long-running heat (pile, mill or landfill?)' : f.active === false ? `Heat not seen on ${f.misses} later clear pass${f.misses > 1 ? 'es' : ''}` : f.lightning ? 'Likely lightning fire' : f.confirmed ? 'Fire, seen on 2 satellite passes' : 'Possible fire, 1 satellite pass';
+const label = f => (f.kind === 'heat' ? heatName(f) : {wildfire:'Wildfire', rx:'Prescribed fire', burn:'Reported burn'}[f.kind]) + (f.name ? `: ${f.name}` : '');
+const size = f => f.acres ? `${f.acres} ac` : f.kind === 'burn' || f.kind === 'heat' ? 'Size not reported' : 'Size not listed yet';
+const detail = f => [`${f.miles} mi ${f.dir}`, size(f), f.sat ? f.sat + (f.scans > 1 ? `, ${f.scans} scans` : '') : '', f.contained ? `${f.contained}% contained` : '',
+  f.status || '', f.county ? `${f.county} Co.` : '', f.number ? `#${f.number}` : '', f.reported ? clock(f.reported) : '',
+  f.kind === 'heat' && f.first !== f.reported ? `first seen ${clock(f.first)}` : '', f.lightning ? `lightning ${clock(f.lightning)}` : '', windText(f)].filter(Boolean).join(' · ');
+
+const flashText = f => `${f.miles} mi ${f.dir} · ${clock(f.at)}`;
+function stamp(id, at, now, err) {
+  if (!at) return $(id).innerHTML = '<span class="stale">No data</span>';
+  const min = Math.round((now - at) / 60);
+  $(id).innerHTML = err ? `<span class="stale">Stale, ${min} min old</span>` : `${min} min ago`;
+}
+
+if (PROPS && PROPS.length > 1) {
+  const pick = $('pick');
+  pick.innerHTML = PROPS.map(x => `<option style="color:#111" value="${esc(x.p)}">${esc(x.name)}</option>`).join('');
+  pick.value = P || PROPS[0].p;
+  pick.style.display = '';
+  $('name').style.display = 'none';
+  // reload on the new property: tile limits are set when the map is built
+  pick.onchange = () => location.search = '?p=' + encodeURIComponent(pick.value);
+}
+async function refresh(force) {
+  let s;
+  try { s = await (await fetch('/api/status' + (Q || '?') + (force === true ? '&fresh=1' : ''))).json(); }
+  catch { $('status').className = 'Unknown'; $('status').textContent = 'Map server not responding'; return; }
+  const n = s.data.nws, bad = k => s.errors.includes(k);
+  document.title = `${s.level}: ${s.name}`;
+  $('updated').textContent = 'Updated ' + new Date(s.now * 1000).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
+  $('name').textContent = s.name;
+  if (n) $('where').textContent = `${n.county} County, ${n.state}, near ${n.near}`;
+  $('status').className = s.level;
+  $('status').innerHTML = `${s.level}<small>${s.why.length ? s.why.map(esc).join(', ') : 'No active alerts or nearby wildfires'}</small>`;
+  ['nws','fires','burn','storms','raws','lightning','fire_class','climate','potential'].forEach(k => stamp('t-' + k, s.fetched[k], s.now, bad(k)));
+
+  if (n) {
+    $('alerts').innerHTML = n.alerts.length ? n.alerts.map(a => `<div class="row"><b>${esc(a.event)}</b><span>${esc(a.headline)}</span></div>`).join('') : '<div class="none">No active NWS alerts for this location</div>';
+    const w = n.fire_weather;
+    $('fw').innerHTML = facts([['Lowest humidity', show(w.humidity_min_24h, '%')], ['Strongest gust', show(w.gust_max_24h, ' mph')],
+      ['Chance of rain', show(w.rain_chance_24h, '%')], ['Expected rain', show(w.rain_in_24h, ' in')],
+      ['How high smoke rises', show(w.mixing_height_ft?.toLocaleString(), ' ft')], ['Wind moving smoke', w.transport_wind_mph === null ? '--' : `${show(w.transport_wind_dir)} ${w.transport_wind_mph} mph`]]);
+    $('fc').innerHTML = n.forecast.map(p => `<div class="fc"><b>${esc(p.name)}</b><b>${p.temp} ${p.unit}</b><span class="sub">${esc(p.short)}, ${esc(p.wind)}</span><span class="sub">${p.rain ?? 0}% rain</span></div>`).join('');
+  }
+  wind = s.data.wind || wind;
+  $('wind-note').textContent = s.data.wind ? clock(s.data.wind.time) : '';
+  fires = s.data.fires ? s.data.fires.items : [];
+  $('fire-n').textContent = fires.length;
+  $('fires').innerHTML = fires.length ? fires.map((f, i) => `<button class="row" data-i="${i}"><b>${esc(label(f))}</b><span>${esc(detail(f))} · ${coords(f.lat, f.lon)}</span></button>`).join('') : '<div class="none">No active fire or heat detected</div>';
+  map.getSource('fire').setData({type:'FeatureCollection', features:fires.map(f => ({type:'Feature', geometry:{type:'Point', coordinates:[f.lon, f.lat]}, properties:{kind:f.kind, out:f.active === false, confirmed:!!f.confirmed, title:label(f), detail:detail(f), link:f.link || ''}}))});
+  const fc = s.data.fire_class, pot = s.data.potential;
+  const plain = {'Very Low':'Wildfires are unlikely to spread much.', 'Low':'A wildfire would be easy to control.', 'Moderate':'A wildfire could take heavy equipment to control.',
+    'High':'A wildfire would be hard to control.', 'Very High':'A wildfire could spread fast and be very hard to control.', 'Extreme':'A wildfire would be dangerous and likely out of control.'};
+  const badge = r => `<div class="badge ${r.replace(' ', '')}">${r}</div><div>${plain[r]}</div>`;
+  const fcDate = d => new Date(d + 'T12:00:00').toLocaleDateString([], {month:'short', day:'numeric'});
+  const dayName = (d, i) => i === 0 ? 'Today' : new Date(d + 'T12:00:00').toLocaleDateString([], {weekday:'short'});
+  const week = pot ? '<div style="margin-top:6px"><b>Next 7 days</b> ' + pot.days.filter(d => d.date).map((d, i) =>
+    `<span style="white-space:nowrap${d.trigger ? ';color:var(--warn);font-weight:600' : ''}">${dayName(d.date, i)} ${esc(d.trigger ? 'high risk' : (d.dryness || '--').toLowerCase())}</span>`).join(' · ') +
+    '<div class="sub">National Predictive Services fire potential. High risk = dry fuels plus critical burn weather or lightning.</div></div>' : '';
+  $('danger').innerHTML = (fc ? badge(fc.rating) + `<div class="sub" style="margin-top:4px">US Forest Service forecast${fc.date ? ' for ' + fcDate(fc.date) : ''}. National map, updated daily. Check local signs and bans before burning.</div>`
+    : '<div class="none">Forest Service rating unavailable</div>') + week;
+  const c = s.data.current;
+  if (c) {
+    $('now').innerHTML = facts([['Temperature', show(c.temp_f, ' F')], ['Humidity', show(c.humidity, '%')],
+      ['Wind', c.wind_mph === null ? '--' : `${show(c.wind_dir)} ${c.wind_mph} mph`], ['Sky', show(c.sky)],
+      ['Fuel dryness', show(c.fuel_moisture, '% moisture')]]);
+    $('station').textContent = `From ${c.source}, ${c.miles} mi from the property, ${clock(c.observed)}. Lower fuel moisture means drier and easier to burn.`;
+  } else $('now').innerHTML = '<div class="none">No station reporting nearby</div>';
+  flashes = s.data.lightning ? s.data.lightning.items : [];
+  $('lightning').innerHTML = !s.data.lightning ? '<div class="none">Unavailable</div>' : flashes.length ? `<button class="row"><b>${flashes.length} flashes within 25 mi, last ${s.data.lightning.minutes} min</b><span>Closest ${esc(flashText(flashes[0]))}, click to view</span></button>` : `<div class="none">No flashes within 25 mi, last ${s.data.lightning.minutes} min</div>`;
+  const rain = s.data.rain, rating = s.data.fire_class?.rating, hold = s.data.lightning?.holdover;
+  $('lightning').innerHTML += `<div class="sub" style="margin-top:4px${s.data.primed ? ';color:var(--watch)' : ''}">Lightning fire risk: ${s.data.primed ? 'primed' : 'not primed'}` +
+    ` (fire danger ${esc(rating || 'unknown')}, rain ${rain ? rain.inches.toFixed(2) + ' in' : 'unknown'} last ${rain?.days || 3} days)` +
+    (hold ? `. Last strike on the property ${clock(hold)}` : '') + '</div>';
+  map.getSource('lightning').setData({type:'FeatureCollection', features:flashes.map(f => ({type:'Feature', geometry:{type:'Point', coordinates:[f.lon, f.lat]}, properties:{}}))});
+  const img = s.data.imagery;
+  if (img && img.mosaic !== mosaic) {
+    mosaic = img.mosaic;
+    map.getSource('recent-tract').setTiles([mosaicTile(mosaic)]);
+    map.getSource('recent').setTiles([mosaicTile(img.base || mosaic)]);
+    setBase();
+  }
+  const short = d => new Date(d + 'T12:00:00').toLocaleDateString([], {month:'short', day:'numeric'});
+  const newest = img && img.coverage.find(c => c.date !== 'none');
+  $('s2-label').textContent = newest ? `Sentinel-2, ${short(newest.date)}` : 'Sentinel-2';
+  $('base-note').textContent = img ? `Newest clear image on tract: ${img.coverage.map(c => c.date === 'none' ? `${c.pct}% no image` : `${short(c.date)} ${c.pct}%`).join(', ')}.` : 'Sentinel-2 unavailable, showing Esri.';
+  if (s.data.fires?.failed?.length) $('fires').innerHTML += `<div class="sub" style="color:var(--watch)">Missing: ${esc(s.data.fires.failed.join(', '))}</div>`;
+  $('burn').textContent = s.data.burn ? s.data.burn.note : 'Unavailable, check the state forestry agency.';
+  const cl = s.data.climate || {}, r = cl.rain, dr = cl.drought;
+  const TEMP = {Above:'warmer', Below:'colder', Normal:'normal temps'}, WET = {Above:'wetter', Below:'drier', Normal:'normal rain'};
+  const lean = o => { const t = [TEMP[o?.temp?.cat], WET[o?.rain?.cat]].filter(Boolean).join(', '); return o ? (t ? t[0].toUpperCase() + t.slice(1) : 'No clear signal') : '--'; };
+  const dName = dr ? dr.category.replace(/ \(D\d\)/, '') : '';
+  $('climate-sum').textContent = [dr && dr.dsci ? dName : '', r?.pct_30d == null ? '' : `rain ${Math.round(r.pct_30d)}% of normal`].filter(Boolean).join(' · ');
+  $('drought').innerHTML = facts([
+    ['Drought', dr ? (dr.dsci ? `${esc(dName)}, drier than ${dr.wetter_years} of ${dr.years} years` : 'None') : '--'],
+    ['Rain, 30 days', r?.pct_30d == null ? '--' : `${Math.round(r.pct_30d)}% of normal`],
+    ['Next 2 weeks', lean(cl.d8_14)],
+    ['Next 3 months', lean(cl.season)]]);
+  const st = s.data.storms ? s.data.storms.items : [];
+  $('storms').innerHTML = s.data.storms ? (st.length ? st.map(x => `<div class="row"><b>${esc(x.type)} ${esc(x.name)}</b><span>${x.miles.toFixed(0)} mi ${x.dir}, ${x.wind_kt} kt, ${esc(x.moving)}</span></div>`).join('') : '<div class="none">No active storms tracked by NHC</div>') : '<div class="none">Unavailable</div>';
+  // only swap tile URLs when the time bucket changes; constant setTiles reloads and has hung these maps
+  const tick = force === true ? s.now : Math.floor(s.now / 600);
+  if (tick !== lastTick) {
+    if (lastTick !== undefined) { map.getSource('radar').setTiles([RADAR + '&t=' + tick]); map.getSource('clouds').setTiles([CLOUDS + '?t=' + tick]); }
+    lastTick = tick;
+  }
+}
+setInterval(refresh, 60000);
+$('reload').onclick = async e => {
+  e.target.disabled = true;
+  e.target.textContent = 'Loading...';
+  await refresh(true);
+  e.target.disabled = false;
+  e.target.textContent = 'Reload';
+};
+</script>
+</body>
+</html>
