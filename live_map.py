@@ -970,25 +970,25 @@ def tract_cloud(place, item_id):
 
 
 ESRI_META = "https://services.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/identify"
-NAIP = "https://imagery.nationalmap.gov/arcgis/rest/services/USGSNAIPPlus/ImageServer"
 
 
 def pull_basemaps(place, _):
     """Capture date and resolution of the sharp basemaps at the tract center (Waters, 2026-11-12: Esri's
     image there was years old with no date shown). Esri: its own imagery metadata. NAIP: newest USDA flight
-    in the USGS catalog, the one the map draws (newest-first mosaic rule in the page)."""
+    over the tract in Planetary Computer's catalog, plus a newest-first mosaic the map draws from (cached tiles,
+    about 0.6 s each; USGS's NAIP ImageServer renders on demand at 2 to 12 s a tile)."""
     pt = f"{place.lon},{place.lat}"
     box = f"{place.lon - .01},{place.lat - .01},{place.lon + .01},{place.lat + .01}"
     esri = get(ESRI_META + "?" + urllib.parse.urlencode({"geometry": pt, "geometryType": "esriGeometryPoint", "sr": 4326, "layers": "all",
                "tolerance": 0, "mapExtent": box, "imageDisplay": "400,400,96", "returnGeometry": "false", "f": "json"}))
     a = next((r["attributes"] for r in esri.get("results", []) if r["layerName"] == "World Imagery"), {})
     d = str(a.get("DATE (YYYYMMDD)", ""))
-    naip = get(NAIP + "/identify?" + urllib.parse.urlencode({"geometry": json.dumps({"x": place.lon, "y": place.lat, "spatialReference": {"wkid": 4326}}),
-               "geometryType": "esriGeometryPoint", "returnCatalogItems": "true", "returnGeometry": "false", "f": "json"}))
-    flights = [f["attributes"] for f in naip.get("catalogItems", {}).get("features", []) if f["attributes"].get("acquisition_date")]
-    n = max(flights, key=lambda f: f["acquisition_date"], default=None)
+    newest = [{"field": "datetime", "direction": "desc"}]
+    n = (post_json(STAC, {"collections": ["naip"], "intersects": {"type": "Point", "coordinates": [place.lon, place.lat]},
+                          "limit": 1, "sortby": newest})["features"] or [None])[0]
+    mosaic = post_json(MOSAIC, {"filter-lang": "cql2-json", "filter": {"op": "=", "args": [{"property": "collection"}, "naip"]}, "sortby": newest})
     return {"esri": {"date": f"{d[:4]}-{d[4:6]}-{d[6:8]}", "res": float(a["RESOLUTION (M)"])} if d.isdigit() and len(d) == 8 else None,
-            "naip": {"date": datetime.fromtimestamp(n["acquisition_date"] / 1000, timezone.utc).strftime("%Y-%m-%d"), "res": n["resolution_value"]} if n else None}
+            "naip": {"date": n["properties"]["datetime"][:10], "res": n["properties"].get("gsd"), "mosaic": mosaic["id"]} if n else None}
 
 
 def pull_imagery(place, _):
