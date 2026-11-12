@@ -74,7 +74,8 @@ button.row:hover,button.row:focus-visible{background:var(--line)}
     <div id="map"></div>
     <div id="layer-panel">
       <div class="basemaps">
-        <button class="base-btn active" data-base="sat">Esri high resolution</button>
+        <button class="base-btn active" data-base="sat" id="esri-label">Esri high resolution</button>
+        <button class="base-btn" data-base="naip" id="naip-label">NAIP</button>
         <button class="base-btn" data-base="recent" id="s2-label">Sentinel-2</button>
         <div class="note" id="base-note"></div>
       </div>
@@ -132,6 +133,9 @@ maplibregl.addProtocol('cloudonly', async params => {
   ctx.putImageData(img, 0, 0);
   return {data: await (await cv.convertToBlob({type:'image/png'})).arrayBuffer()};
 });
+// USDA NAIP aerial photo (0.6 m, public domain), newest flight first; dated per tract by pull_basemaps in live_map.py
+const NAIP_TILES = 'https://imagery.nationalmap.gov/arcgis/rest/services/USGSNAIPPlus/ImageServer/exportImage?bbox={bbox-epsg-3857}&bboxSR=3857&imageSR=3857&size=256,256&format=jpg&f=image&mosaicRule=' +
+  encodeURIComponent(JSON.stringify({mosaicMethod: 'esriMosaicAttribute', sortField: 'acquisition_date', sortValue: '2100/01/01', ascending: true}));
 const mosaicTile = id => `https://planetarycomputer.microsoft.com/api/data/v1/mosaic/${id}/tiles/WebMercatorQuad/{z}/{x}/{y}@1x?collection=sentinel-2-l2a&assets=visual&asset_bidx=visual%7C1%2C2%2C3&nodata=0&rescale=0,150&pixel_selection=first`;
 const BLANK = 'data:,';
 // [w, s, e, n] 50 mi around the property, filled in by the server. Only Sentinel-2 uses it: its tiles are the slowest and it hides below z8.
@@ -149,6 +153,7 @@ const map = new maplibregl.Map({container:'map', attributionControl:{compact:tru
   // Esri switches to a greener mosaic at z10 and below, which showed as a box while z11 tiles loaded.
   // USGS NAIP matches Esri's z11+ look, so it covers the zoomed-out views instead.
   usgs:{type:'raster', tiles:['https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}'], tileSize:256, maxzoom:16, attribution:'Imagery: USGS NAIP'},
+  naip:{type:'raster', tiles:[NAIP_TILES], tileSize:256, maxzoom:18, attribution:'Imagery: USDA NAIP'},
   recent:{type:'raster', tiles:[BLANK], tileSize:256, ...inArea, attribution:'Sentinel-2: ESA, Microsoft Planetary Computer'},
   'recent-tract':{type:'raster', tiles:[BLANK], tileSize:256, ...(TRACT ? {bounds:TRACT} : inArea)},
   // clouds stay unbounded so a hurricane's cloud shield shows from far out; at maxzoom 7 they are few tiles
@@ -161,6 +166,7 @@ const map = new maplibregl.Map({container:'map', attributionControl:{compact:tru
 }, layers:[
   {id:'usgs', type:'raster', source:'usgs', maxzoom:11},
   {id:'sat', type:'raster', source:'sat', minzoom:11},
+  {id:'naip', type:'raster', source:'naip', minzoom:11, layout:{visibility:'none'}},
   {id:'recent', type:'raster', source:'recent', minzoom:8, layout:{visibility:'none'}},
   {id:'recent-tract', type:'raster', source:'recent-tract', minzoom:8, layout:{visibility:'none'}},
   {id:'clouds', type:'raster', source:'clouds', layout:{visibility:'none'}, paint:{'raster-opacity':.85, 'raster-fade-duration':0, 'raster-resampling':'linear'}},
@@ -238,10 +244,11 @@ window.liveMap = map;  // the portal syncs its stand map's view with this one
 // sharp imagery first; Sentinel-2 is newer but 10 m, one click away. Inside the portal, the stand map's choice
 let base = (window !== parent && parent.portalBase && parent.portalBase()) || 'sat';
 function setBase() {
-  const recent = mosaic && base === 'recent';
-  ['recent', 'recent-tract'].forEach(id => map.setLayoutProperty(id, 'visibility', recent ? 'visible' : 'none'));
-  map.setLayoutProperty('sat', 'visibility', recent ? 'none' : 'visible');  // USGS fills below z8 in Sentinel mode
-  document.querySelectorAll('[data-base]').forEach(b => b.classList.toggle('active', b.dataset.base === (recent ? 'recent' : 'sat')));
+  const b = base === 'recent' && !mosaic ? 'sat' : base;  // Sentinel-2 only once its mosaic is in
+  ['recent', 'recent-tract'].forEach(id => map.setLayoutProperty(id, 'visibility', b === 'recent' ? 'visible' : 'none'));
+  map.setLayoutProperty('naip', 'visibility', b === 'naip' ? 'visible' : 'none');
+  map.setLayoutProperty('sat', 'visibility', b === 'sat' ? 'visible' : 'none');  // USGS fills below z11 / z8
+  document.querySelectorAll('[data-base]').forEach(x => x.classList.toggle('active', x.dataset.base === b));
 }
 document.querySelectorAll('[data-base]').forEach(b => b.onclick = () => { base = b.dataset.base; setBase(); });
 window.liveBase = v => { if (v) { base = v; setBase(); } return base; };  // the portal reads and sets it on tab switches
@@ -564,6 +571,10 @@ async function refresh(force) {
   const short = d => new Date(d + 'T12:00:00').toLocaleDateString([], {month:'short', day:'numeric'});
   const newest = img && img.coverage.find(c => c.date !== 'none');
   $('s2-label').textContent = newest ? `Sentinel-2, ${short(newest.date)}` : 'Sentinel-2';
+  // sharp imagery is dated by month and year at the tract (Esri's can be years old)
+  const my = d => new Date(d + 'T12:00:00').toLocaleDateString([], {month:'short', year:'numeric'}), bm = s.data.basemaps || {};
+  $('esri-label').textContent = bm.esri ? `Esri, ${my(bm.esri.date)}` : 'Esri high resolution';
+  $('naip-label').textContent = bm.naip ? `NAIP, ${my(bm.naip.date)}` : 'NAIP';
   $('base-note').textContent = img ? `Newest clear image on tract: ${img.coverage.map(c => c.date === 'none' ? `${c.pct}% no image` : `${short(c.date)} ${c.pct}%`).join(', ')}.` : 'Sentinel-2 unavailable, showing Esri.';
   if (s.data.fires?.failed?.length) $('fires').innerHTML += `<div class="sub" style="color:var(--watch)">Missing: ${esc(s.data.fires.failed.join(', '))}</div>`;
   $('burn').textContent = s.data.burn ? s.data.burn.note : 'Unavailable, check the state forestry agency.';

@@ -81,7 +81,7 @@ STATE_FIPS = dict(zip("AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA 
                       "01 02 04 05 06 08 09 10 11 12 13 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 44 45 46 47 48 49 50 51 53 54 55 56".split()))
 WIND_N, WIND_STEP = 7, 0.25  # 7 x 7 points, about 17 mi apart, covers about 50 mi each way
 AREA_MI = 50  # weather tiles (radar, clouds, Sentinel-2) only load inside this box around the property
-TTL = {"nws": 300, "fires": 600, "storms": 900, "burn": 1800, "raws": 600, "lightning": 120, "imagery": 3600, "potential": 3600, "fire_class": 3600, "wind": 900, "rain": 900, "climate": 21600}
+TTL = {"nws": 300, "fires": 600, "storms": 900, "burn": 1800, "raws": 600, "lightning": 120, "imagery": 3600, "basemaps": 86400, "potential": 3600, "fire_class": 3600, "wind": 900, "rain": 900, "climate": 21600}
 RAWS = "https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/PublicView_RAWS/FeatureServer/1/query"
 STAC = "https://planetarycomputer.microsoft.com/api/stac/v1/search"
 MOSAIC = "https://planetarycomputer.microsoft.com/api/data/v1/mosaic/register"
@@ -969,6 +969,28 @@ def tract_cloud(place, item_id):
     return cloud_pct(next(iter(stats["properties"]["statistics"].values()))["histogram"])
 
 
+ESRI_META = "https://services.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/identify"
+NAIP = "https://imagery.nationalmap.gov/arcgis/rest/services/USGSNAIPPlus/ImageServer"
+
+
+def pull_basemaps(place, _):
+    """Capture date and resolution of the sharp basemaps at the tract center (Waters, 2026-11-12: Esri's
+    image there was years old with no date shown). Esri: its own imagery metadata. NAIP: newest USDA flight
+    in the USGS catalog, the one the map draws (newest-first mosaic rule in the page)."""
+    pt = f"{place.lon},{place.lat}"
+    box = f"{place.lon - .01},{place.lat - .01},{place.lon + .01},{place.lat + .01}"
+    esri = get(ESRI_META + "?" + urllib.parse.urlencode({"geometry": pt, "geometryType": "esriGeometryPoint", "sr": 4326, "layers": "all",
+               "tolerance": 0, "mapExtent": box, "imageDisplay": "400,400,96", "returnGeometry": "false", "f": "json"}))
+    a = next((r["attributes"] for r in esri.get("results", []) if r["layerName"] == "World Imagery"), {})
+    d = str(a.get("DATE (YYYYMMDD)", ""))
+    naip = get(NAIP + "/identify?" + urllib.parse.urlencode({"geometry": json.dumps({"x": place.lon, "y": place.lat, "spatialReference": {"wkid": 4326}}),
+               "geometryType": "esriGeometryPoint", "returnCatalogItems": "true", "returnGeometry": "false", "f": "json"}))
+    flights = [f["attributes"] for f in naip.get("catalogItems", {}).get("features", []) if f["attributes"].get("acquisition_date")]
+    n = max(flights, key=lambda f: f["acquisition_date"], default=None)
+    return {"esri": {"date": f"{d[:4]}-{d[4:6]}-{d[6:8]}", "res": float(a["RESOLUTION (M)"])} if d.isdigit() and len(d) == 8 else None,
+            "naip": {"date": datetime.fromtimestamp(n["acquisition_date"] / 1000, timezone.utc).strftime("%Y-%m-%d"), "res": n["resolution_value"]} if n else None}
+
+
 def pull_imagery(place, _):
     now = datetime.now(timezone.utc)
     lats, lons = zip(*place.points)
@@ -1101,12 +1123,12 @@ class Live:
         if fresh:
             with self.lock:
                 # imagery changes a few times a week, so Reload leaves it cached
-                self.cache = {k: v for k, v in self.cache.items() if k == "imagery"}
+                self.cache = {k: v for k, v in self.cache.items() if k in ("imagery", "basemaps")}
         nws = self.fetch("nws", pull_nws, None)
         with ThreadPoolExecutor(8) as ex:
             jobs = {k: ex.submit(self.fetch, k, fn, None) for k, fn in
                     (("fires", pull_fires), ("storms", pull_storms), ("raws", pull_raws),
-                     ("lightning", pull_lightning), ("imagery", pull_imagery), ("fire_class", pull_fire_class),
+                     ("lightning", pull_lightning), ("imagery", pull_imagery), ("basemaps", pull_basemaps), ("fire_class", pull_fire_class),
                      ("wind", pull_wind), ("rain", pull_rain), ("potential", pull_potential))}
             if nws["data"]:
                 jobs["burn"] = ex.submit(self.fetch, "burn", pull_burn, nws["data"])
