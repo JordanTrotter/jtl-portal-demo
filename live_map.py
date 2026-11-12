@@ -24,7 +24,7 @@ from pathlib import Path
 HERE = Path(__file__).parent
 # NWS rejects an empty User-Agent but does not need contact info; no email or personal detail goes out with any request
 UA = "jt-live-map/0.2"
-FIRE_RADIUS_MI = 25
+FIRE_RADIUS_MI = 50  # 25 until 2026-11-12; 50 for the partner demo so a live fire is likelier to show (page text says 50 too)
 RECENT_DAYS = 7
 STORM_RADIUS_MI = 500
 INACTIVE = {"contained", "controlled", "mopped up", "out", "closed"}
@@ -455,9 +455,11 @@ def pull_fires(place, _):
     jobs = {"GA fire": lambda: pull_incidents(place, "georgiafc"), "SC fire": lambda: pull_incidents(place, "scfc"),
             "SC notices": lambda: pull_notices(place), "FIRMS": lambda: pull_heat(place), "GOES": lambda: pull_goes(place)}
     got, failed = {}, []
-    for name, job in jobs.items():
+    with ThreadPoolExecutor(len(jobs)) as ex:  # side by side: SCFC notices alone can take 20 s
+        futures = {name: ex.submit(job) for name, job in jobs.items()}
+    for name, f in futures.items():
         try:
-            got[name] = job()
+            got[name] = f.result()
         except Exception as e:
             print(f"{name} failed: {e}", flush=True)
             failed.append(name)
@@ -512,9 +514,11 @@ TLES = {}
 def tles(now):
     """Orbit elements for each polar satellite, refreshed twice a day."""
     if not TLES or now - TLES["at"] > timedelta(hours=12):
+        with ThreadPoolExecutor(len(POLAR)) as ex:  # five small files; one after another took 10 s
+            bodies = dict(zip(POLAR, ex.map(lambda n: get(TLE.format(n), "text/plain", raw=True), (v[0] for v in POLAR.values()))))
         got = {}
         for name, (norad, half) in POLAR.items():
-            l1, l2 = get(TLE.format(norad), "text/plain", raw=True).strip().splitlines()[-2:]
+            l1, l2 = bodies[name].strip().splitlines()[-2:]
             got[name] = (l1.strip(), l2.strip(), half)
         TLES.clear()
         TLES.update(sats=got, at=now)
@@ -1152,6 +1156,8 @@ def serve(props, port, portal=None, auth=None, edit=None):
     page = (HERE / "index.html").read_bytes().replace(b"/*PROPS*/null", menu)
     logo = (HERE.parent.parent / "JT" / "land" / "JT_Land__White&Yellow.png").read_bytes()  # same land logo as the webmap skill
     sessions = set()  # ponytail: sessions die with the server; a restart means signing in again
+    for lv, _ in props:  # warm the feeds now: the first pull takes about 30 s and the page would sit on "Checking..."
+        threading.Thread(target=lv.status, daemon=True).start()
 
     class H(BaseHTTPRequestHandler):
         def send(self, body, kind, code=200, headers=()):

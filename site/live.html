@@ -63,7 +63,7 @@ button.row:hover,button.row:focus-visible{background:var(--line)}
     <section><h2>Alerts <span id="t-nws"></span></h2><div id="alerts"></div></section>
     <section><h2>Current conditions <span id="t-raws"></span></h2><dl id="now"></dl><div class="sub" id="station" style="margin-top:6px"></div></section>
     <section><h2>Next 24 hours</h2><dl id="fw"></dl></section>
-    <section><details id="fire-box"><summary><h2><div>Fires and burns within 25 mi (<i id="fire-n" style="font-style:normal">0</i>)</div><span id="t-fires"></span></h2></summary><div class="sub" style="margin:6px 0">Click one to see it on the map.</div><div id="fires"></div></details></section>
+    <section><details id="fire-box"><summary><h2><div>Fires and burns within 50 mi (<i id="fire-n" style="font-style:normal">0</i>)</div><span id="t-fires"></span></h2></summary><div class="sub" style="margin:6px 0">Click one to see it on the map.</div><div id="fires"></div></details></section>
     <section><h2>Lightning <span id="t-lightning"></span></h2><div id="lightning"></div></section>
     <section><h2>Burn status <span id="t-burn"></span></h2><div id="burn"></div></section>
     <section><h2>Tropical storms <span id="t-storms"></span></h2><div id="storms"></div></section>
@@ -82,7 +82,7 @@ button.row:hover,button.row:focus-visible{background:var(--line)}
       <label><input type="checkbox" id="lyr-fire" checked> Fire</label>
       <div style="display:flex;align-items:center;gap:6px"><label><input type="checkbox" id="lyr-radar" checked> Radar</label><button id="loop" title="Play radar loop" style="border:0;background:none;cursor:pointer;padding:0 2px;font-size:13px;line-height:1">&#9654;</button></div>
       <div id="loop-bar" style="display:none;margin:2px 0 4px"><div style="display:flex;align-items:center;gap:4px"><input type="range" id="loop-slider" min="0" step="1" style="flex:1"><button id="loop-close" title="Back to live radar" style="border:0;background:none;cursor:pointer;padding:0 2px">&#10005;</button></div><div class="note" id="loop-label"></div></div>
-      <label><input type="checkbox" id="lyr-clouds"> Clouds (GOES)</label>
+      <label><input type="checkbox" id="lyr-clouds"> Clouds (GOES) <span class="note" id="cloud-note"></span></label>
       <label><input type="checkbox" id="lyr-wind" checked> Wind flow <span class="note" id="wind-note"></span></label>
       <div class="keys">
         <span><i class="dot" style="background:#ff3b30"></i>Wildfire, or fire on 2 satellite passes</span>
@@ -92,7 +92,7 @@ button.row:hover,button.row:focus-visible{background:var(--line)}
         <span><i class="dot" style="background:#8e8e93"></i>Out, contained, or long-running heat</span>
         <span><svg width="12" height="14" viewBox="4 0 18 28" style="margin-right:4px;vertical-align:-2px"><path d="M15 1L5 15h7L8 27 21 10h-8l6-9z" fill="#ffe600" stroke="#000" stroke-width="1.5"/></svg>Lightning flash</span>
       </div>
-      <button class="base-btn" id="zoom">Show 25 mile area</button>
+      <button class="base-btn" id="zoom">Show 50 mile area</button>
       <button class="base-btn" id="weather">Weather view</button>
     </div>
   </div>
@@ -102,7 +102,9 @@ button.row:hover,button.row:focus-visible{background:var(--line)}
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const show = (v, unit='') => v === null || v === undefined ? '--' : esc(v) + unit;
-const clock = s => new Date(s).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'});
+// today = time only; older = date and time
+const clock = s => { const d = new Date(s), time = {hour:'numeric', minute:'2-digit'};
+  return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString([], time) : d.toLocaleString([], {month:'short', day:'numeric', ...time}); };
 const facts = pairs => pairs.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
 // NOAA MRMS quality-controlled base reflectivity: every radar merged, clutter, birds and false echoes removed, 2 min steps,
 // about 1 km. Public domain, no key. The service keeps about 2 hours, so the loop's past frames ask for a TIME.
@@ -252,9 +254,9 @@ $('weather').onclick = () => {
 let wide = false;
 $('zoom').onclick = () => {
   wide = !wide;
-  $('zoom').textContent = wide ? 'Back to property' : 'Show 25 mile area';
+  $('zoom').textContent = wide ? 'Back to property' : 'Show 50 mile area';
   if (!wide) return map.fitBounds(bounds, {padding:40});
-  const c = bounds.getCenter(), dy = 25 / 69, dx = dy / Math.cos(c.lat * Math.PI / 180);
+  const c = bounds.getCenter(), dy = 50 / 69, dx = dy / Math.cos(c.lat * Math.PI / 180);
   map.fitBounds([[c.lng - dx, c.lat - dy], [c.lng + dx, c.lat + dy]], {padding:20});
 };
 
@@ -542,7 +544,7 @@ async function refresh(force) {
     $('station').textContent = `From ${c.source}, ${c.miles} mi from the property, ${clock(c.observed)}. Lower fuel moisture means drier and easier to burn.`;
   } else $('now').innerHTML = '<div class="none">No station reporting nearby</div>';
   flashes = s.data.lightning ? s.data.lightning.items : [];
-  $('lightning').innerHTML = !s.data.lightning ? '<div class="none">Unavailable</div>' : flashes.length ? `<button class="row"><b>${flashes.length} flashes within 25 mi, last ${s.data.lightning.minutes} min</b><span>Closest ${esc(flashText(flashes[0]))}, click to view</span></button>` : `<div class="none">No flashes within 25 mi, last ${s.data.lightning.minutes} min</div>`;
+  $('lightning').innerHTML = !s.data.lightning ? '<div class="none">Unavailable</div>' : flashes.length ? `<button class="row"><b>${flashes.length} flashes within 50 mi, last ${s.data.lightning.minutes} min</b><span>Closest ${esc(flashText(flashes[0]))}, click to view</span></button>` : `<div class="none">No flashes within 50 mi, last ${s.data.lightning.minutes} min</div>`;
   const rain = s.data.rain, rating = s.data.fire_class?.rating, hold = s.data.lightning?.holdover;
   $('lightning').innerHTML += `<div class="sub" style="margin-top:4px${s.data.primed ? ';color:var(--watch)' : ''}">Lightning fire risk: ${s.data.primed ? 'primed' : 'not primed'}` +
     ` (fire danger ${esc(rating || 'unknown')}, rain ${rain ? rain.inches.toFixed(2) + ' in' : 'unknown'} last ${rain?.days || 3} days)` +
@@ -576,11 +578,25 @@ async function refresh(force) {
   // only swap tile URLs when the time bucket changes; constant setTiles reloads and has hung these maps
   const tick = force === true ? s.now : Math.floor(s.now / 600);
   if (tick !== lastTick) {
-    if (lastTick !== undefined) { map.getSource('radar').setTiles([RADAR + '&t=' + tick]); map.getSource('clouds').setTiles([CLOUDS + '?t=' + tick]); }
+    if (lastTick !== undefined) { map.getSource('radar').setTiles([RADAR + '&t=' + tick]); updateClouds(); }
     lastTick = tick;
   }
 }
 setInterval(refresh, 60000);
+// newest GOES cloud image (NASA GIBS runs about an hour behind): pin the tiles to it so the time shown matches what's drawn
+let cloudAt;
+async function updateClouds() {
+  const now = new Date(), iso = d => d.toISOString().slice(0, 19) + 'Z';
+  try {
+    const xml = await (await fetch(`${GIBS}1.0.0/GOES-East_ABI_GeoColor/default/GoogleMapsCompatible_Level7/all/${iso(new Date(now - 3 * 36e5))}--${iso(now)}.xml`)).text();
+    const last = xml.match(/<Domain>([^<]*)<\/Domain>/)[1].split(',').pop().split('/');
+    const t = last.length === 3 ? last[1] : last[0];  // "start/end/PT10M" or a single time
+    if (t !== cloudAt) map.getSource('clouds').setTiles([CLOUDS.replace('/default/default/', `/default/${t}/`)]);
+    cloudAt = t;
+    $('cloud-note').textContent = clock(t);
+  } catch { $('cloud-note').textContent = ''; }  // keeps the newest-image tiles it already has
+}
+map.on('load', updateClouds);
 </script>
 </body>
 </html>
