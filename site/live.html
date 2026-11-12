@@ -79,11 +79,11 @@ button.row:hover,button.row:focus-visible{background:var(--line)}
         <div class="note" id="base-note"></div>
       </div>
       <b>Live</b>
-      <label><input type="checkbox" id="lyr-fire" checked> Fire</label>
-      <div style="display:flex;align-items:center;gap:6px"><label><input type="checkbox" id="lyr-radar" checked> Radar</label><button id="loop" title="Play radar loop" style="border:0;background:none;color:inherit;cursor:pointer;padding:0 2px;font-size:13px;line-height:1">&#9654;</button></div>
+      <label><input type="checkbox" id="lyr-fire" checked autocomplete="off"> Fire</label>
+      <div style="display:flex;align-items:center;gap:6px"><label><input type="checkbox" id="lyr-radar" checked autocomplete="off"> Radar</label><button id="loop" title="Play radar loop" style="border:0;background:none;color:inherit;cursor:pointer;padding:0 2px;font-size:13px;line-height:1">&#9654;</button></div>
       <div id="loop-bar" style="display:none;margin:2px 0 4px"><div style="display:flex;align-items:center;gap:4px"><input type="range" id="loop-slider" min="0" step="1" style="flex:1"><button id="loop-close" title="Back to live radar" style="border:0;background:none;color:inherit;cursor:pointer;padding:0 2px">&#10005;</button></div><div class="note" id="loop-label"></div></div>
-      <label><input type="checkbox" id="lyr-clouds"> Clouds (GOES) <span class="note" id="cloud-note"></span></label>
-      <label><input type="checkbox" id="lyr-wind" checked> Wind flow <span class="note" id="wind-note"></span></label>
+      <label><input type="checkbox" id="lyr-clouds" autocomplete="off"> Clouds (GOES) <span class="note" id="cloud-note"></span></label>
+      <label><input type="checkbox" id="lyr-wind" autocomplete="off"> Wind flow <span class="note" id="wind-note"></span></label>
       <div class="keys">
         <span><i class="dot" style="background:#ff3b30"></i>Wildfire, or fire on 2 satellite passes</span>
         <span><i class="dot" style="background:#ff2d92"></i>Prescribed fire</span>
