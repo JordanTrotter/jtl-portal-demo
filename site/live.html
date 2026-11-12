@@ -56,8 +56,8 @@ button.row:hover,button.row:focus-visible{background:var(--line)}
 <body>
 <div id="app">
   <div id="panel">
-    <a href="https://jordantrotter.com/services/land-management/" target="_blank" rel="noopener"><img src="logo.png" alt="Jordan Trotter Land" style="height:36px;display:block;margin-bottom:10px"></a>
-    <header style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start"><div><h1 id="name">Live Map</h1><select id="pick" style="display:none;font-size:20px;font-weight:700;background:none;color:inherit;border:0;padding:0;cursor:pointer"></select><div class="sub" id="where">Loading...</div></div><div style="text-align:right"><button id="reload" style="background:#ffe047;color:#111;border:0;border-radius:4px;padding:6px 12px;font-weight:600;cursor:pointer">Reload</button><div class="sub" id="updated"></div></div></header>
+    <a id="brand" href="https://jordantrotter.com/services/land-management/" target="_blank" rel="noopener"><img src="logo.png" alt="Jordan Trotter Land" style="height:36px;display:block;margin-bottom:10px"></a>
+    <header style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start"><div><h1 id="name">Live Map</h1><select id="pick" style="display:none;font-size:20px;font-weight:700;background:none;color:inherit;border:0;padding:0;cursor:pointer"></select><div class="sub" id="where">Loading...</div></div><div style="text-align:right"><div class="sub" id="updated"></div></div></header>
     <div id="status" class="Unknown">Checking...</div>
     <section><h2>Wildfire risk today <span id="t-fire_class"></span></h2><div id="danger"></div></section>
     <section><h2>Alerts <span id="t-nws"></span></h2><div id="alerts"></div></section>
@@ -134,6 +134,7 @@ const mosaicTile = id => `https://planetarycomputer.microsoft.com/api/data/v1/mo
 const BLANK = 'data:,';
 // [w, s, e, n] 50 mi around the property, filled in by the server. Only Sentinel-2 uses it: its tiles are the slowest and it hides below z8.
 // Radar is unbounded: a screen holds about the same number of tiles at any zoom, so a box only saved tiles when zoomed far out.
+if (window !== parent) document.getElementById('brand').remove();  // inside the portal: its header already carries the logo
 // properties the server runs, [{p, name}]; one property shows a plain title, several show a dropdown
 const PROPS = parent.LIVE_CFG.props, P = new URLSearchParams(location.search).get('p') || '', Q = P ? '?p=' + encodeURIComponent(P) : '';
 // the tract's own bounding box: the tract-checked Sentinel-2 image only draws here, the regional fill shows elsewhere
@@ -193,10 +194,13 @@ map.on('styleimagemissing', e => {
 let bounds;
 map.on('load', async () => {
   const gj = await (await fetch('/boundary.geojson' + Q)).json();
+  map.getSource('boundary').setData(gj);  // the encrypted link has no boundary file; the source's own URL load 404s there
   bounds = new maplibregl.LngLatBounds();
   const walk = c => typeof c[0] === 'number' ? bounds.extend(c) : c.forEach(walk);
   gj.features.forEach(f => walk(f.geometry.coordinates));
-  map.fitBounds(bounds, {padding:40, duration:0});
+  // inside the portal, open on the same view as its stand map so the tabs read as one map
+  const v = window !== parent && parent.portalView && parent.portalView();
+  v ? map.jumpTo(v) : map.fitBounds(bounds, {padding:40, duration:0});
   refresh();
   map.once('idle', prefetchTract);
 });
@@ -228,7 +232,9 @@ async function prefetchTract() {
 const LINKED = {radar:['radar', 'lightning']};
 ['fire', 'radar', 'clouds'].forEach(id => $('lyr-' + id).onchange = e => (LINKED[id] || [id]).forEach(l => map.setLayoutProperty(l, 'visibility', e.target.checked ? 'visible' : 'none')));
 let mosaic, lastTick;
-let base = 'sat';  // sharp imagery first; Sentinel-2 is newer but 10 m, one click away
+window.liveMap = map;  // the portal syncs its stand map's view with this one
+// sharp imagery first; Sentinel-2 is newer but 10 m, one click away. Inside the portal, the stand map's choice
+let base = (window !== parent && parent.portalBase && parent.portalBase()) || 'sat';
 function setBase() {
   const recent = mosaic && base === 'recent';
   ['recent', 'recent-tract'].forEach(id => map.setLayoutProperty(id, 'visibility', recent ? 'visible' : 'none'));
@@ -236,6 +242,7 @@ function setBase() {
   document.querySelectorAll('[data-base]').forEach(b => b.classList.toggle('active', b.dataset.base === (recent ? 'recent' : 'sat')));
 }
 document.querySelectorAll('[data-base]').forEach(b => b.onclick = () => { base = b.dataset.base; setBase(); });
+window.liveBase = v => { if (v) { base = v; setBase(); } return base; };  // the portal reads and sets it on tab switches
 $('weather').onclick = () => {
   ['clouds', 'radar', 'lightning'].forEach(id => { if ($('lyr-' + id)) $('lyr-' + id).checked = true; map.setLayoutProperty(id, 'visibility', 'visible'); });
   wide = true;
@@ -491,7 +498,7 @@ async function refresh(force) {
   if (n) $('where').textContent = `${n.county} County, ${n.state}, near ${n.near}`;
   $('status').className = s.level;
   $('status').innerHTML = `${s.level}<small>${s.why.length ? s.why.map(esc).join(', ') : 'No active alerts or nearby wildfires'}</small>`;
-  ['nws','fires','burn','storms','raws','lightning','fire_class','climate','potential'].forEach(k => stamp('t-' + k, s.fetched[k], s.now, bad(k)));
+  ['nws','fires','burn','storms','raws','lightning','fire_class','climate'].forEach(k => stamp('t-' + k, s.fetched[k], s.now, bad(k)));  // potential shares the Wildfire risk section's stamp
 
   if (n) {
     $('alerts').innerHTML = n.alerts.length ? n.alerts.map(a => `<div class="row"><b>${esc(a.event)}</b><span>${esc(a.headline)}</span></div>`).join('') : '<div class="none">No active NWS alerts for this location</div>';
@@ -565,13 +572,6 @@ async function refresh(force) {
   }
 }
 setInterval(refresh, 60000);
-$('reload').onclick = async e => {
-  e.target.disabled = true;
-  e.target.textContent = 'Loading...';
-  await refresh(true);
-  e.target.disabled = false;
-  e.target.textContent = 'Reload';
-};
 </script>
 </body>
 </html>
