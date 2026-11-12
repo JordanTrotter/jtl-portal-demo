@@ -646,7 +646,7 @@ def qpe(lat, lon, keys):
     out = {}
     for k in keys:
         try:
-            out[k] = round(float(vals[QPE_LAYERS[k]]), 2)
+            out[k] = max(round(float(vals[QPE_LAYERS[k]]), 2), 0.0)  # NOAA writes -10000 where no rain fell
         except (KeyError, TypeError, ValueError):
             out[k] = None
     return out
@@ -1153,7 +1153,7 @@ def serve(props, port, portal=None, auth=None, edit=None):
     portal = Path(portal).resolve() if portal else None
     by = {slug(lv.place.name): (lv, json.dumps(gj).encode()) for lv, gj in props}
     menu = json.dumps([{"p": k, "name": lv.place.name} for k, (lv, _) in by.items()]).encode()
-    page = (HERE / "index.html").read_bytes().replace(b"/*PROPS*/null", menu)
+    page = lambda: (HERE / "index.html").read_bytes().replace(b"/*PROPS*/null", menu)  # read per request: page edits show on reload, no restart
     logo = (HERE.parent.parent / "JT" / "land" / "JT_Land__White&Yellow.png").read_bytes()  # same land logo as the webmap skill
     sessions = set()  # ponytail: sessions die with the server; a restart means signing in again
     for lv, _ in props:  # warm the feeds now: the first pull takes about 30 s and the page would sit on "Checking..."
@@ -1219,7 +1219,7 @@ def serve(props, port, portal=None, auth=None, edit=None):
             if path == "/":
                 lats, lons = zip(*live.place.points)
                 tract = [min(lons), min(lats), max(lons), max(lats)]
-                self.send(page.replace(b"/*AREA*/null", json.dumps(area(live.place)).encode())
+                self.send(page().replace(b"/*AREA*/null", json.dumps(area(live.place)).encode())
                           .replace(b"/*TRACT*/null", json.dumps(tract).encode()), "text/html; charset=utf-8")
             elif path == "/logo.png":
                 self.send(logo, "image/png")

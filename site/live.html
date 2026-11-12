@@ -14,13 +14,13 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px/
 #panel{overflow-y:auto;border-right:1px solid var(--line)}
 #mapwrap{position:relative;height:100%;min-height:320px}
 #map{height:100%}
-#layer-panel{position:absolute;top:10px;right:10px;z-index:900;background:#fff;color:#111;border-radius:4px;box-shadow:0 1px 5px rgba(0,0,0,.4);font:13px/1.4 system-ui,sans-serif;padding:8px 10px;width:220px;max-height:calc(100% - 50px);overflow-y:auto}
+#layer-panel{position:absolute;top:10px;right:10px;z-index:900;background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:4px;box-shadow:0 1px 5px rgba(0,0,0,.4);font:13px/1.4 system-ui,sans-serif;padding:8px 10px;width:220px;max-height:calc(100% - 50px);overflow-y:auto}
 #layer-panel label{display:block;margin:3px 0;cursor:pointer}
-#layer-panel .basemaps{border-bottom:1px solid #ddd;margin-bottom:6px;padding-bottom:6px}
-#layer-panel button.base-btn{display:inline-block;margin:2px 4px 2px 0;padding:3px 8px;border:1px solid #999;border-radius:3px;background:#f4f4f4;color:#111;cursor:pointer;font-size:12px}
+#layer-panel .basemaps{border-bottom:1px solid var(--line);margin-bottom:6px;padding-bottom:6px}
+#layer-panel button.base-btn{display:inline-block;margin:2px 4px 2px 0;padding:3px 8px;border:1px solid var(--line);border-radius:3px;background:var(--bg);color:var(--text);cursor:pointer;font-size:12px}
 #layer-panel button.base-btn.active{background:#ff7a00;color:#111;border-color:#ff7a00}
-#layer-panel .note{color:#555;font-size:11px;margin-top:4px}
-#layer-panel .keys{font-size:12px;color:#333;margin:6px 0;border-top:1px solid #ddd;padding-top:6px}
+#layer-panel .note{color:var(--dim);font-size:11px;margin-top:4px}
+#layer-panel .keys{font-size:12px;color:var(--dim);margin:6px 0;border-top:1px solid var(--line);padding-top:6px}
 #layer-panel .keys span{display:block}
 header{padding:14px 16px}
 h1{font-size:18px;margin:0}
@@ -80,8 +80,8 @@ button.row:hover,button.row:focus-visible{background:var(--line)}
       </div>
       <b>Live</b>
       <label><input type="checkbox" id="lyr-fire" checked> Fire</label>
-      <div style="display:flex;align-items:center;gap:6px"><label><input type="checkbox" id="lyr-radar" checked> Radar</label><button id="loop" title="Play radar loop" style="border:0;background:none;cursor:pointer;padding:0 2px;font-size:13px;line-height:1">&#9654;</button></div>
-      <div id="loop-bar" style="display:none;margin:2px 0 4px"><div style="display:flex;align-items:center;gap:4px"><input type="range" id="loop-slider" min="0" step="1" style="flex:1"><button id="loop-close" title="Back to live radar" style="border:0;background:none;cursor:pointer;padding:0 2px">&#10005;</button></div><div class="note" id="loop-label"></div></div>
+      <div style="display:flex;align-items:center;gap:6px"><label><input type="checkbox" id="lyr-radar" checked> Radar</label><button id="loop" title="Play radar loop" style="border:0;background:none;color:inherit;cursor:pointer;padding:0 2px;font-size:13px;line-height:1">&#9654;</button></div>
+      <div id="loop-bar" style="display:none;margin:2px 0 4px"><div style="display:flex;align-items:center;gap:4px"><input type="range" id="loop-slider" min="0" step="1" style="flex:1"><button id="loop-close" title="Back to live radar" style="border:0;background:none;color:inherit;cursor:pointer;padding:0 2px">&#10005;</button></div><div class="note" id="loop-label"></div></div>
       <label><input type="checkbox" id="lyr-clouds"> Clouds (GOES) <span class="note" id="cloud-note"></span></label>
       <label><input type="checkbox" id="lyr-wind" checked> Wind flow <span class="note" id="wind-note"></span></label>
       <div class="keys">
@@ -280,13 +280,16 @@ async function radarImage(minutesAgo, box, w, h) {
   for (let i = 0; i < mask.length; i++) mask[i] = px[i * 4 + 3] > 40 ? 1 : 0;
   return {url: URL.createObjectURL(blob), mask};
 }
-// best (dx, dy) in pixels that lays the old echoes on the new ones; coarse 4 px search, then a 1 px refine
+// best (dx, dy) in pixels that lays the old echoes on the new ones; coarse 4 px search, then a 1 px refine.
+// null when too little rain overlaps to measure a track (clear day): otherwise every shift ties at 0 and the
+// first one tried (-60, -60) wins, which flung the projection off the map.
 function motion(a, b, w, h) {
   const score = (dx, dy, step) => { let s = 0;
     for (let y = Math.max(0, -dy); y < Math.min(h, h - dy); y += step) for (let x = Math.max(0, -dx); x < Math.min(w, w - dx); x += step) s += a[y * w + x] & b[(y + dy) * w + x + dx];
     return s; };
   let best = [0, 0], top = -1;
   for (let dy = -60; dy <= 60; dy += 4) for (let dx = -60; dx <= 60; dx += 4) { const s = score(dx, dy, 4); if (s > top) { top = s; best = [dx, dy]; } }
+  if (top < 10) return null;  // ponytail: 10 samples at 4 px is a rough floor; raise it if light drizzle gives jumpy tracks
   const [cx, cy] = best; top = -1;
   for (let dy = cy - 3; dy <= cy + 3; dy++) for (let dx = cx - 3; dx <= cx + 3; dx++) { const s = score(dx, dy, 2); if (s > top) { top = s; best = [dx, dy]; } }
   return best;
@@ -335,9 +338,10 @@ $('loop').onclick = async () => {
   let cast;
   try {
     const [then, cur] = await Promise.all([radarImage(20, [x0, y0, x1, y1], W, H), radarImage(0, [x0, y0, x1, y1], W, H)]);
-    const [dx, dy] = motion(then.mask, cur.mask, W, H);
-    cast = {img: cur.url, dx, dy};
+    const mv = motion(then.mask, cur.mask, W, H);
     URL.revokeObjectURL(then.url);
+    if (mv) cast = {img: cur.url, dx: mv[0], dy: mv[1]};
+    else { URL.revokeObjectURL(cur.url); frames[5].label += ', no rain moving nearby to project'; }
   } catch {}
   if (cast) {
     NOW_STEPS.forEach(m => {
@@ -390,7 +394,7 @@ map.on('click', async e => {
   try { w = await (await fetch(`${QPE}&geometry=${x},${y}&mapExtent=${x - 1},${y - 1},${+x + 1},${+y + 1}`)).json(); } catch {}
   if (!w?.results) return pin(e.lngLat, 'Rain', 'Unavailable');
   const val = {};
-  w.results.forEach(r => { const v = parseFloat(r.attributes['Service Pixel Value']); val[r.layerId] = isNaN(v) ? 'No data' : v.toFixed(2) + ' in'; });
+  w.results.forEach(r => { const v = parseFloat(r.attributes['Service Pixel Value']); val[r.layerId] = isNaN(v) ? 'No data' : Math.max(v, 0).toFixed(2) + ' in'; });  // NOAA writes -10000 where no rain fell
   const past = id => val[id] || 'No data';
   popup?.remove();
   popup = new maplibregl.Popup().setLngLat(e.lngLat).setHTML(`<div style="color:#111"><b>Rain</b> <select class="rain-span" style="font-size:12px">` +
