@@ -51,7 +51,7 @@ PRIMED_RATINGS = ("High", "Very High", "Extreme")
 PRIMED_RAIN_IN = 0.1
 STRIKE_MATCH_MI = 3  # GLM places flashes to within a few miles
 STATE = HERE / "state"
-# A later clear look that sees nothing retires heat: 1 miss for a 1-pass spot, 2 for a confirmed one.
+# A later clear look that sees nothing retires heat: 2 misses for any spot, then it leaves the map.
 # A look = a polar pass with the spot well inside the swath (edge pixels are coarse and miss small fires),
 # already in the FIRMS files (they lag the pass by hours), with GOES calling that pixel clear at the time.
 # Clouds never count as a miss.
@@ -59,7 +59,7 @@ TLE = "https://celestrak.org/NORAD/elements/gp.php?CATNR={}&FORMAT=TLE"  # publi
 POLAR = {"Suomi NPP": (37849, 1000), "NOAA-20": (43013, 1000), "NOAA-21": (54234, 1000), "Aqua": (27424, 800), "Terra": (25994, 800)}  # NORAD id, good half swath km
 FIRMS_SAT = {"VIIRS NOAA-20": "NOAA-20", "VIIRS NOAA-21": "NOAA-21", "VIIRS Suomi NPP": "Suomi NPP", "A": "Aqua", "T": "Terra"}
 GOES_CLEAR, GOES_CLOUD = 100, 200  # FDC mask: 100 processed no fire (clear); 200 and up cloud tests
-MISSES_TO_DROP = {False: 1, True: 2}  # keyed by confirmed
+MISSES_TO_DROP = {False: 2, True: 2}  # keyed by confirmed; Waters 2026-11-12: 2 clear misses for any spot, then off the map
 MODIS_MIN_CONFIDENCE = 30  # MODIS gives 0-100; under 30 is FIRMS' "low" class, same cut as VIIRS "low"
 GOES_PRODUCT = "ABI-L2-FDCC"  # CONUS fire product, a scan every 5 min, same bucket as GLM
 GOES_MINUTES = 30
@@ -472,6 +472,7 @@ def pull_fires(place, _):
     try:
         looks = good_passes(place, now - timedelta(hours=HEAT_HOURS), now)
         polar = [retire(h, looks, firms.get("swept", {}), place) for h in polar]
+        polar = [h for h in polar if h.get("active", True) or h.get("long_run")]  # retired heat leaves the map; piles stay gray
     except Exception as e:  # no orbit data or GOES: keep the heat; a missing check never hides a fire
         print(f"later-pass check failed: {e}", flush=True)
     # finest location wins: official, then polar 375 m-1 km, then GOES only where nothing else sees it
@@ -1031,7 +1032,7 @@ def level(data, errors):
         why["Watch"].append("Lightning over the property" if near[0]["miles"] == 0 else f"Lightning {near[0]['miles']} mi {near[0]['dir']}")
     today = ((data.get("potential") or {}).get("days") or [{}])[0]
     if today.get("trigger"):  # official high risk day for the area; a regional product, so a caution, not a Warning
-        why["Watch"].append(f"High fire risk today: {today['dryness'].lower() if today.get('dryness') else 'dry'} fuels, {today['trigger']}")
+        why["Watch"].append(f"Regional high fire risk today: {today['dryness'].lower() if today.get('dryness') else 'dry'} fuels, {today['trigger']}")
     if (data.get("burn") or {}).get("status") == "restricted":
         why["Watch"].append("Burn restriction")
     for name in ("Warning", "Watch"):

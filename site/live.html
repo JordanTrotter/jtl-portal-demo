@@ -59,7 +59,7 @@ button.row:hover,button.row:focus-visible{background:var(--line)}
     <a id="brand" href="https://jordantrotter.com/services/land-management/" target="_blank" rel="noopener"><img src="logo.png" alt="Jordan Trotter Land" style="height:36px;display:block;margin-bottom:10px"></a>
     <header style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start"><div><h1 id="name">Live Map</h1><select id="pick" style="display:none;font-size:20px;font-weight:700;background:none;color:inherit;border:0;padding:0;cursor:pointer"></select><div class="sub" id="where">Loading...</div></div><div style="text-align:right"><div class="sub" id="updated"></div></div></header>
     <div id="status" class="Unknown">Checking...</div>
-    <section><h2>Wildfire risk today <span id="t-fire_class"></span></h2><div id="danger"></div></section>
+    <section><h2>Wildfire risk <span id="t-fire_class"></span></h2><div id="danger"></div></section>
     <section><h2>Alerts <span id="t-nws"></span></h2><div id="alerts"></div></section>
     <section><h2>Current conditions <span id="t-raws"></span></h2><dl id="now"></dl><div class="sub" id="station" style="margin-top:6px"></div></section>
     <section><h2>Next 24 hours</h2><dl id="fw"></dl></section>
@@ -520,11 +520,20 @@ async function refresh(force) {
   const badge = r => `<div class="badge ${r.replace(' ', '')}">${r}</div><div>${plain[r]}</div>`;
   const fcDate = d => new Date(d + 'T12:00:00').toLocaleDateString([], {month:'short', day:'numeric'});
   const dayName = (d, i) => i === 0 ? 'Today' : new Date(d + 'T12:00:00').toLocaleDateString([], {weekday:'short'});
-  const week = pot ? '<div style="margin-top:6px"><b>Next 7 days</b> ' + pot.days.filter(d => d.date).map((d, i) =>
+  const week = pot ? '<div style="margin-top:8px"><b>Next 7 days</b> ' + pot.days.filter(d => d.date).map((d, i) =>
     `<span style="white-space:nowrap${d.trigger ? ';color:var(--warn);font-weight:600' : ''}">${dayName(d.date, i)} ${esc(d.trigger ? 'high risk' : (d.dryness || '--').toLowerCase())}</span>`).join(' · ') +
-    '<div class="sub">National Predictive Services fire potential. High risk = dry fuels plus critical burn weather or lightning.</div></div>' : '';
-  $('danger').innerHTML = (fc ? badge(fc.rating) + `<div class="sub" style="margin-top:4px">US Forest Service forecast${fc.date ? ' for ' + fcDate(fc.date) : ''}. National map, updated daily. Check local signs and bans before burning.</div>`
-    : '<div class="none">Forest Service rating unavailable</div>') + week;
+    '<div class="sub">Regional outlook (National Predictive Services). High risk = dry fuels plus critical burn weather or lightning.</div></div>' : '';
+  // laid out by day: the regional outlook covers today, the Forest Service map is posted for tomorrow, so they never share a line
+  const fw = (s.data.nws || {}).fire_weather || {}, today = pot && pot.days[0];
+  const local = [fw.humidity_min_24h != null && `humidity down to ${fw.humidity_min_24h}%`, fw.gust_max_24h != null && `gusts to ${fw.gust_max_24h} mph`,
+    fw.rain_chance_24h != null && `${fw.rain_chance_24h}% chance of rain`].filter(Boolean).join(', ');
+  const dry = d => esc((d.dryness || 'unknown').toLowerCase());
+  const todayHtml = today ? `<div><b>Today</b> <span${today.trigger ? ' style="color:var(--warn);font-weight:600"' : ''}>${today.trigger ? 'High risk day' : dry(today) + ' fuels, no high risk trigger'}</span></div>
+    <div class="sub">${today.trigger ? `Regional outlook: ${dry(today)} fuels with ${esc(today.trigger)}. ` : ''}${local ? 'At the property, next 24 hr: ' + esc(local) + '.' : ''}</div>` : '';
+  const when = fc && fc.date && (fc.date === new Date().toLocaleDateString('en-CA') ? 'Today' : 'Tomorrow, ' + fcDate(fc.date));
+  const fcHtml = fc ? `<div style="margin:8px 0 2px"><b>${when || 'Forest Service rating'}</b></div>${badge(fc.rating)}<div class="sub" style="margin-top:4px">US Forest Service fire danger class at the property, posted daily for the next day. Check local signs and bans before burning.</div>`
+    : '<div class="none">Forest Service rating unavailable</div>';
+  $('danger').innerHTML = todayHtml + fcHtml + week;
   const c = s.data.current;
   if (c) {
     $('now').innerHTML = facts([['Temperature', show(c.temp_f, ' F')], ['Humidity', show(c.humidity, '%')],
