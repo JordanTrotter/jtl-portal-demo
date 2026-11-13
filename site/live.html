@@ -257,15 +257,13 @@ function setBase() {
   document.querySelectorAll('[data-base]').forEach(x => x.classList.toggle('active', x.dataset.base === b));
 }
 document.querySelectorAll('[data-base]').forEach(b => b.onclick = () => { base = b.dataset.base; setBase(); });
-window.liveBase = v => { if (v) { base = v; setBase(); } return base; };
-// a failing imagery feed (e.g. an expired NAIP mosaic) falls back to Esri instead of a blank map; 3 tile errors trips it
-const tileFails = {};
-map.on('error', e => {
-  const s = e.sourceId === 'naip' ? 'naip' : (e.sourceId || '').startsWith('recent') ? 'recent' : null;
-  if (!s || (tileFails[s] = (tileFails[s] || 0) + 1) < 3) return;
-  if (s === 'naip') naipMosaic = null; else mosaic = null;
-  setBase();
-});  // the portal reads and sets it on tab switches
+window.liveBase = v => { if (v) { base = v; setBase(); } return base; };  // the portal reads and sets it on tab switches
+// NAIP goes on only if one of its tiles at the map center loads: its mosaic ids expire 24 h after they are made and an
+// expired one 404s every tile, which left a blank map (2026-11-13). Until then Esri shows.
+let naipTried;
+const tileOk = url => { const c = map.getCenter(), z = 14, n = 2 ** z;
+  const x = Math.floor((c.lng + 180) / 360 * n), y = Math.floor((1 - Math.asinh(Math.tan(c.lat * Math.PI / 180)) / Math.PI) / 2 * n);
+  return fetch(url.replace('{z}', z).replace('{x}', x).replace('{y}', y)).then(r => r.ok, () => false); };
 $('weather').onclick = () => {
   ['clouds', 'radar', 'lightning'].forEach(id => { if ($('lyr-' + id)) $('lyr-' + id).checked = true; map.setLayoutProperty(id, 'visibility', 'visible'); });
   wide = true;
@@ -584,7 +582,10 @@ async function refresh(force) {
   const my = d => new Date(d + 'T12:00:00').toLocaleDateString([], {month:'short', year:'numeric'}), bm = s.data.basemaps || {};
   $('esri-label').textContent = bm.esri ? `Esri, ${my(bm.esri.date)}` : 'Esri high resolution';
   $('naip-label').textContent = bm.naip ? `NAIP, ${my(bm.naip.date)}` : 'NAIP';
-  if (bm.naip && bm.naip.mosaic !== naipMosaic) { naipMosaic = bm.naip.mosaic; map.getSource('naip').setTiles([naipTile(naipMosaic)]); setBase(); }
+  if (bm.naip && bm.naip.mosaic !== naipTried) {
+    const id = naipTried = bm.naip.mosaic;
+    tileOk(naipTile(id)).then(ok => { if (ok) { naipMosaic = id; map.getSource('naip').setTiles([naipTile(id)]); setBase(); } });
+  }
   $('base-note').textContent = img ? `Newest clear image on tract: ${img.coverage.map(c => c.date === 'none' ? `${c.pct}% no image` : `${short(c.date)} ${c.pct}%`).join(', ')}.` : 'Sentinel-2 unavailable, showing Esri.';
   if (s.data.fires?.failed?.length) $('fires').innerHTML += `<div class="sub" style="color:var(--watch)">Missing: ${esc(s.data.fires.failed.join(', '))}</div>`;
   $('burn').textContent = s.data.burn ? s.data.burn.note : 'Unavailable, check the state forestry agency.';
