@@ -226,6 +226,13 @@ async function prefetchTract() {
     for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++)
       urls.push(`https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`);
   }
+  // USGS fills below z11 (and is the basemap until a mosaic arrives): z8-11 over a wider box, about 40 tiles
+  for (const z of [8, 9, 10, 11]) {
+    const [x0, y0] = tile(bounds.getWest() - .3, bounds.getNorth() + .3, z), [x1, y1] = tile(bounds.getEast() + .3, bounds.getSouth() - .3, z);
+    for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++)
+      urls.unshift(`https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/${z}/${y}/${x}`);
+  }
+  // ponytail: NAIP not preloaded, its tiles cache for 1 h only (cache-control max-age=3600) at 0.7 to 1 s each; pre-rendered PMTiles is the fix
   const queue = urls.slice(0, PREFETCH_MAX);
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   // browsers allow about 6 connections per host; yield them to on-screen tiles whenever the map is busy
