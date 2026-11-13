@@ -257,7 +257,15 @@ function setBase() {
   document.querySelectorAll('[data-base]').forEach(x => x.classList.toggle('active', x.dataset.base === b));
 }
 document.querySelectorAll('[data-base]').forEach(b => b.onclick = () => { base = b.dataset.base; setBase(); });
-window.liveBase = v => { if (v) { base = v; setBase(); } return base; };  // the portal reads and sets it on tab switches
+window.liveBase = v => { if (v) { base = v; setBase(); } return base; };
+// a failing imagery feed (e.g. an expired NAIP mosaic) falls back to Esri instead of a blank map; 3 tile errors trips it
+const tileFails = {};
+map.on('error', e => {
+  const s = e.sourceId === 'naip' ? 'naip' : (e.sourceId || '').startsWith('recent') ? 'recent' : null;
+  if (!s || (tileFails[s] = (tileFails[s] || 0) + 1) < 3) return;
+  if (s === 'naip') naipMosaic = null; else mosaic = null;
+  setBase();
+});  // the portal reads and sets it on tab switches
 $('weather').onclick = () => {
   ['clouds', 'radar', 'lightning'].forEach(id => { if ($('lyr-' + id)) $('lyr-' + id).checked = true; map.setLayoutProperty(id, 'visibility', 'visible'); });
   wide = true;
