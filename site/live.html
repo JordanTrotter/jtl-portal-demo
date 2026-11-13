@@ -81,7 +81,7 @@ button.row:hover,button.row:focus-visible{background:var(--line)}
       </div>
       <b>Live</b>
       <label><input type="checkbox" id="lyr-fire" checked autocomplete="off"> Fire</label>
-      <div style="display:flex;align-items:center;gap:6px"><label><input type="checkbox" id="lyr-radar" checked autocomplete="off"> Radar</label><button id="loop" title="Play radar loop" style="border:0;background:none;color:inherit;cursor:pointer;padding:0 2px;font-size:13px;line-height:1">&#9654;</button></div>
+      <div style="display:flex;align-items:center;gap:6px"><label><input type="checkbox" id="lyr-radar" checked autocomplete="off"> Radar</label><span id="radar-age" class="sub"></span><button id="loop" title="Play radar loop" style="border:0;background:none;color:inherit;cursor:pointer;padding:0 2px;font-size:13px;line-height:1">&#9654;</button></div>
       <div id="loop-bar" style="display:none;margin:2px 0 4px"><div style="display:flex;align-items:center;gap:4px"><input type="range" id="loop-slider" min="0" step="1" style="flex:1"><button id="loop-close" title="Back to live radar" style="border:0;background:none;color:inherit;cursor:pointer;padding:0 2px">&#10005;</button></div><div class="note" id="loop-label"></div></div>
       <label><input type="checkbox" id="lyr-clouds" autocomplete="off"> Clouds (GOES) <span class="note" id="cloud-note"></span></label>
       <label><input type="checkbox" id="lyr-wind" autocomplete="off"> Wind flow <span class="note" id="wind-note"></span></label>
@@ -147,7 +147,7 @@ const TRACT = parent.LIVE_CFG.tract;
 const AREA = parent.LIVE_CFG.area, inArea = AREA ? {bounds:AREA} : {};
 
 // a big tile cache keeps zoomed-past tiles in memory, so zooming back out is instant
-const map = new maplibregl.Map({container:'map', attributionControl:{compact:true}, maxTileCacheSize:3000, style:{version:8, sources:{
+const map = new maplibregl.Map({container:'map', attributionControl:{compact:true}, maxTileCacheSize:3000, refreshExpiredTiles:false, style:{version:8, sources:{
   sat:{type:'raster', tiles:['https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'], tileSize:256, maxzoom:19, attribution:'Imagery &copy; Esri'},
   // Esri switches to a greener mosaic at z10 and below, which showed as a box while z11 tiles loaded.
   // USGS NAIP matches Esri's z11+ look, so it covers the zoomed-out views instead.
@@ -591,6 +591,8 @@ async function refresh(force) {
     if (lastTick !== undefined) { map.getSource('radar').setTiles([RADAR + '&t=' + tick]); updateClouds(); }
     lastTick = tick;
   }
+  // proof the layer is alive: a clear sky draws nothing, so say when the radar last updated
+  $('radar-age').textContent = 'updated ' + clock(Math.floor(s.now / 120) * 120000);
 }
 setInterval(refresh, 60000);
 // newest GOES cloud image (NASA GIBS runs about an hour behind): pin the tiles to it so the time shown matches what's drawn
