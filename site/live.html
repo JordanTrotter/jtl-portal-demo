@@ -515,7 +515,7 @@ async function refresh(force) {
   if (n) $('where').textContent = `${n.county} County, ${n.state}, near ${n.near}`;
   $('status').className = s.level;
   $('status').innerHTML = `${s.level}<small>${s.why.length ? s.why.map(esc).join(', ') : 'No active alerts or nearby wildfires'}</small>`;
-  ['nws','fires','burn','storms','raws','lightning','fire_class','climate'].forEach(k => stamp('t-' + k, s.fetched[k], s.now, bad(k)));  // potential shares the Wildfire risk section's stamp
+  ['nws','fires','burn','storms','raws','lightning','fire_class','climate'].forEach(k => stamp('t-' + k, s.fetched[k], s.now, bad(k)));
 
   if (n) {
     $('alerts').innerHTML = n.alerts.length ? n.alerts.map(a => `<div class="row"><b>${esc(a.event)}</b><span>${esc(a.headline)}</span></div>`).join('') : '<div class="none">No active NWS alerts for this location</div>';
@@ -531,26 +531,16 @@ async function refresh(force) {
   $('fire-n').textContent = fires.length;
   $('fires').innerHTML = fires.length ? fires.map((f, i) => `<button class="row" data-i="${i}"><b>${esc(label(f))}</b><span>${esc(detail(f))} · ${coords(f.lat, f.lon)}</span></button>`).join('') : '<div class="none">No active fire or heat detected</div>';
   map.getSource('fire').setData({type:'FeatureCollection', features:fires.map(f => ({type:'Feature', geometry:{type:'Point', coordinates:[f.lon, f.lat]}, properties:{kind:f.kind, out:f.active === false, confirmed:!!f.confirmed, title:label(f), detail:detail(f), link:f.link || ''}}))});
-  const fc = s.data.fire_class, pot = s.data.potential;
+  const fc = s.data.fire_class;
   const plain = {'Very Low':'Wildfires are unlikely to spread much.', 'Low':'A wildfire would be easy to control.', 'Moderate':'A wildfire could take heavy equipment to control.',
     'High':'A wildfire would be hard to control.', 'Very High':'A wildfire could spread fast and be very hard to control.', 'Extreme':'A wildfire would be dangerous and likely out of control.'};
-  const badge = r => `<div class="badge ${r.replace(' ', '')}">${r}</div><div>${plain[r]}</div>`;
   const fcDate = d => new Date(d + 'T12:00:00').toLocaleDateString([], {month:'short', day:'numeric'});
-  const dayName = (d, i) => i === 0 ? 'Today' : new Date(d + 'T12:00:00').toLocaleDateString([], {weekday:'short'});
-  const week = pot ? '<div style="margin-top:8px"><b>Next 7 days</b> ' + pot.days.filter(d => d.date).map((d, i) =>
-    `<span style="white-space:nowrap${d.trigger ? ';color:var(--warn);font-weight:600' : ''}">${dayName(d.date, i)} ${esc(d.trigger ? 'high risk' : (d.dryness || '--').toLowerCase())}</span>`).join(' · ') +
-    '<div class="sub">Regional outlook (National Predictive Services). High risk = dry fuels plus critical burn weather or lightning.</div></div>' : '';
-  // laid out by day: the regional outlook covers today, the Forest Service map is posted for tomorrow, so they never share a line
-  const fw = (s.data.nws || {}).fire_weather || {}, today = pot && pot.days[0];
-  const local = [fw.humidity_min_24h != null && `humidity down to ${fw.humidity_min_24h}%`, fw.gust_max_24h != null && `gusts to ${fw.gust_max_24h} mph`,
-    fw.rain_chance_24h != null && `${fw.rain_chance_24h}% chance of rain`].filter(Boolean).join(', ');
-  const dry = d => esc((d.dryness || 'unknown').toLowerCase());
-  const todayHtml = today ? `<div><b>Today</b> <span${today.trigger ? ' style="color:var(--warn);font-weight:600"' : ''}>${today.trigger ? 'High risk day' : dry(today) + ' fuels, no high risk trigger'}</span></div>
-    <div class="sub">${today.trigger ? `Regional outlook: ${dry(today)} fuels with ${esc(today.trigger)}. ` : ''}${local ? 'At the property, next 24 hr: ' + esc(local) + '.' : ''}</div>` : '';
-  const when = fc && fc.date && (fc.date === new Date().toLocaleDateString('en-CA') ? 'Today' : 'Tomorrow, ' + fcDate(fc.date));
-  const fcHtml = fc ? `<div style="margin:8px 0 2px"><b>${when || 'Forest Service rating'}</b></div>${badge(fc.rating)}<div class="sub" style="margin-top:4px">US Forest Service fire danger class at the property, posted daily for the next day. Check local signs and bans before burning.</div>`
+  // one source: USFS fire danger class. Today = what yesterday's map said for today (kept by the server); tomorrow = the map as posted
+  const day = (label, r) => `<div style="margin:8px 0 2px"><b>${label}</b></div><div class="badge ${r.rating.replace(' ', '')}">${r.rating}</div><div>${plain[r.rating]}</div>`;
+  const tom = fc && fc.date && fc.date !== new Date().toLocaleDateString('en-CA') ? fc : null;
+  $('danger').innerHTML = fc ? (fc.today ? day('Today', fc.today) : '<div class="sub">Today: no rating yet, it fills in once a full day has been recorded.</div>') + (tom ? day('Tomorrow, ' + fcDate(tom.date), tom) : '') +
+    '<div class="sub" style="margin-top:4px">US Forest Service fire danger class at the property. Check local signs and bans before burning.</div>'
     : '<div class="none">Forest Service rating unavailable</div>';
-  $('danger').innerHTML = todayHtml + fcHtml + week;
   const c = s.data.current;
   if (c) {
     $('now').innerHTML = facts([['Temperature', show(c.temp_f, ' F')], ['Humidity', show(c.humidity, '%')],
