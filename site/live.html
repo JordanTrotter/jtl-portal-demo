@@ -498,7 +498,7 @@ const heatName = f => f.long_run ? 'Long-running heat (pile, mill or landfill?)'
 const label = f => (f.kind === 'heat' ? heatName(f) : {wildfire:'Wildfire', rx:'Prescribed fire', burn:'Reported burn'}[f.kind]) + (f.name ? `: ${f.name}` : '');
 const size = f => f.acres ? `${f.acres} ac` : f.kind === 'burn' || f.kind === 'heat' ? 'Size not reported' : 'Size not listed yet';
 const detail = f => [`${f.miles} mi ${f.dir}`, size(f), f.sat ? f.sat + (f.scans > 1 ? `, ${f.scans} scans` : '') : '', f.contained ? `${f.contained}% contained` : '',
-  f.status || '', f.county ? `${f.county} Co.` : '', f.number ? `#${f.number}` : '', f.reported ? clock(f.reported) : '',
+  f.status || '', f.county ? `${f.county} Co.` : '', f.contact ? `Burner: ${f.contact}` : '', f.number ? `#${f.number}` : '', f.reported ? clock(f.reported) : '',
   f.kind === 'heat' && f.first !== f.reported ? `first seen ${clock(f.first)}` : '', f.lightning ? `lightning ${clock(f.lightning)}` : '', windText(f)].filter(Boolean).join(' · ');
 
 const flashText = f => `${f.miles} mi ${f.dir} · ${clock(f.at)}`;

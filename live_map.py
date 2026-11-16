@@ -8,6 +8,7 @@ import argparse
 import csv
 import io
 import json
+import os
 from collections import defaultdict
 import math
 import re
@@ -301,7 +302,10 @@ def utc(stamp):
 
 
 def notice_points(rows):
-    """Keep location, county and date only. The feed carries names, phones and IP addresses; drop them here."""
+    """Keep location, county and date. The feed carries names, phones and IP addresses; drop them here, except the burner's
+    name and phone when LIVE_CONTACTS=1: set only by the laptop server (Waters, 2026-11-16: call a close burn to confirm it).
+    The GitHub job never sets it, so the client link never carries them. Held in memory only, never written to disk."""
+    contacts = os.environ.get("LIVE_CONTACTS") == "1"
     out = []
     for r in rows:
         try:
@@ -310,7 +314,11 @@ def notice_points(rows):
             continue
         lat, lon = (a, b) if a > 0 else (b, a)
         if 24 < lat < 50 and -125 < lon < -66:
-            out.append({"lat": lat, "lon": lon, "county": r.get("9"), "reported": r.get("date_created")})
+            n = {"lat": lat, "lon": lon, "county": r.get("9"), "reported": r.get("date_created")}
+            if contacts:
+                name = " ".join(str(r.get(k) or "").strip() for k in ("4.3", "4.6")).strip()
+                n["contact"] = ", ".join(x for x in (name, str(r.get("6") or "").strip()) if x) or None
+            out.append(n)
     return out
 
 
@@ -318,7 +326,7 @@ def pull_notices(place):
     rows = get("https://www.scfc.gov/wp-json/scfcapi/v2/notifications/")
     # Gravity Forms stores date_created in UTC
     return [{"kind": "burn", "source": "scfc notice", "county": n["county"], "reported": str(n["reported"]).replace(" ", "T") + "+00:00",
-             **place.locate(n["lat"], n["lon"])}
+             **({"contact": n["contact"]} if n.get("contact") else {}), **place.locate(n["lat"], n["lon"])}
             for n in notice_points(rows) if place.distance(n["lat"], n["lon"]) <= FIRE_RADIUS_MI]
 
 
