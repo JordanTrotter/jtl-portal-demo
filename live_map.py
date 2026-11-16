@@ -463,7 +463,8 @@ def swept_times(text, sat):
 # NASA. With a free MAP_KEY the area API returns only a box around the tract (kilobytes; limit 5000 transactions per 10 min,
 # a 7-day request may count as several). Without a key: the full files, at most once an hour per file.
 FIRMS_AREA = {"VIIRS NOAA-20": "VIIRS_NOAA20_NRT", "VIIRS NOAA-21": "VIIRS_NOAA21_NRT", "VIIRS Suomi NPP": "VIIRS_SNPP_NRT", "MODIS": "MODIS_NRT"}
-FIRMS_DAYS = 7  # history the confirmation and long-running-heat checks look back over (HISTORY_HOURS)
+FIRMS_DAYS = 1  # each pull asks only for the newest day (Waters, 2026-11-16); the week of history comes from the local store
+FIRMS_KEEP_DAYS = 7  # rolling history the confirmation and long-running-heat checks need (HISTORY_HOURS), kept in state/
 FIRMS_BOX_MI = FIRE_RADIUS_MI + 10  # a little past the fire radius, so heat just outside it still confirms heat inside
 FIRMS_EVERY_S = 3600  # full-file fallback only: at most one download per file per hour, across GitHub runs too
 FIRMS_KEYLESS = False  # full-US file fallback without a key: off by Waters' call (2026-11-16) after NASA blocked the home IP
@@ -483,6 +484,33 @@ def firms_box(place, mi=FIRMS_BOX_MI):
     return f"{place.lon - dlon:.3f},{place.lat - dlat:.3f},{place.lon + dlon:.3f},{place.lat + dlat:.3f}"
 
 
+def firms_history(sat, new_text, now=None):
+    """Newest day from NASA + what we already have -> the last FIRMS_KEEP_DAYS as one CSV. Stored in state/ (rides the
+    sealed GitHub cache), deduplicated by pass time and position, so the live map never re-downloads a week."""
+    now = now or datetime.now(timezone.utc)
+    f = STATE / f"firms_hist_{sat.replace(' ', '_')}.json"
+    try:
+        old = json.loads(f.read_text())
+    except (OSError, ValueError):
+        old = {"header": None, "rows": []}
+    lines = new_text.strip().splitlines()
+    header = lines[0] if lines else old["header"]
+    if old["header"] and header != old["header"]:  # NASA changed the columns: start the store over rather than mix
+        old = {"header": header, "rows": []}
+    h = header.split(",")
+    d, t, la, lo = h.index("acq_date"), h.index("acq_time"), h.index("latitude"), h.index("longitude")
+    cutoff = (now - timedelta(days=FIRMS_KEEP_DAYS)).date().isoformat()
+    rows = {}
+    for line in old["rows"] + lines[1:]:
+        c = line.split(",")
+        if len(c) > max(d, t, la, lo) and c[d] >= cutoff:
+            rows[(c[d], c[t].zfill(4), c[la], c[lo])] = line
+    keep = [rows[k] for k in sorted(rows)]
+    STATE.mkdir(exist_ok=True)
+    f.write_text(json.dumps({"header": header, "rows": keep}))
+    return "\n".join([header] + keep)
+
+
 def firms_file(sat, path, place):
     """(CSV text for the area around the tract, {satellite: scan times}). Key: the area API every pull (kilobytes).
     No key: the full-US file at most hourly; only the rows in a wide box and the pass times are kept, in state/ (which
@@ -492,6 +520,7 @@ def firms_file(sat, path, place):
         text = get(f"https://firms.modaps.eosdis.nasa.gov/api/area/csv/{key}/{FIRMS_AREA[sat]}/{firms_box(place)}/{FIRMS_DAYS}", "text/csv", raw=True)
         if not text.startswith("latitude"):  # a bad key or an exceeded limit comes back as a 200 with a text message
             raise RuntimeError("FIRMS area API: " + text[:80].replace(key, "<key>").strip())
+        text = firms_history(sat, text)
         return text, swept_times(text, sat)
     if not FIRMS_KEYLESS:  # Waters, 2026-11-16: no NASA requests at all until the registered key is in (set_firms_key.py)
         raise RuntimeError("no FIRMS key yet: satellite heat off until set_firms_key.py is run")
