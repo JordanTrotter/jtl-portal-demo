@@ -404,8 +404,8 @@ def utc(stamp):
 
 def notice_points(rows):
     """Keep location, county and date. The feed carries names, phones and IP addresses; drop them here, except the burner's
-    name and phone when LIVE_CONTACTS=1: set only by the laptop server (Waters, 2026-11-16: call a close burn to confirm it).
-    The GitHub job never sets it, so the client link never carries them. Held in memory only, never written to disk."""
+    name and phone when LIVE_CONTACTS=1 (Waters, 2026-11-16: call a close burn to confirm it; public SCFC data). Set by the
+    laptop server and the GitHub job (the link's status is sealed). On the server: admin and forester roles only."""
     contacts = os.environ.get("LIVE_CONTACTS") == "1"
     out = []
     for r in rows:
@@ -465,8 +465,7 @@ def swept_times(text, sat):
 FIRMS_AREA = {"VIIRS NOAA-20": "VIIRS_NOAA20_NRT", "VIIRS NOAA-21": "VIIRS_NOAA21_NRT", "VIIRS Suomi NPP": "VIIRS_SNPP_NRT", "MODIS": "MODIS_NRT"}
 FIRMS_DAYS = 7  # history the confirmation and long-running-heat checks look back over (HISTORY_HOURS)
 FIRMS_BOX_MI = FIRE_RADIUS_MI + 10  # a little past the fire radius, so heat just outside it still confirms heat inside
-FIRMS_EVERY_S = 3600  # full-file fallback only
-_FIRMS_CACHE = {}
+FIRMS_EVERY_S = 3600  # full-file fallback only: at most one download per file per hour, across GitHub runs too
 
 
 def firms_key():
@@ -484,17 +483,32 @@ def firms_box(place, mi=FIRMS_BOX_MI):
 
 
 def firms_file(sat, path, place):
+    """(CSV text for the area around the tract, {satellite: scan times}). Key: the area API every pull (kilobytes).
+    No key: the full-US file at most hourly; only the rows in a wide box and the pass times are kept, in state/ (which
+    rides the sealed GitHub cache), so a GitHub run doesn't re-download tens of MB each time."""
     key = firms_key()
     if key:
         text = get(f"https://firms.modaps.eosdis.nasa.gov/api/area/csv/{key}/{FIRMS_AREA[sat]}/{firms_box(place)}/{FIRMS_DAYS}", "text/csv", raw=True)
         if not text.startswith("latitude"):  # a bad key or an exceeded limit comes back as a 200 with a text message
             raise RuntimeError("FIRMS area API: " + text[:80].replace(key, "<key>").strip())
-        return text
-    t, text = _FIRMS_CACHE.get(path, (0, None))
-    if text is None or time.time() - t > FIRMS_EVERY_S:
-        text = get(FIRMS + path, "text/csv", raw=True)
-        _FIRMS_CACHE[path] = (time.time(), text)
-    return text
+        return text, swept_times(text, sat)
+    f = STATE / f"firms_{sat.replace(' ', '_')}.json"
+    try:
+        c = json.loads(f.read_text())
+        if time.time() - c["t"] < FIRMS_EVERY_S:
+            return c["text"], {k: {datetime.fromisoformat(t) for t in v} for k, v in c["swept"].items()}
+    except (OSError, ValueError, KeyError):
+        pass
+    full = get(FIRMS + path, "text/csv", raw=True)
+    lo = [float(x) for x in firms_box(place, 2 * FIRMS_BOX_MI).split(",")]
+    lines = full.splitlines()
+    head = lines[0].split(",")
+    la, lo_i = head.index("latitude"), head.index("longitude")
+    keep = [lines[0]] + [l for l in lines[1:] if l and lo[1] <= float(l.split(",")[la]) <= lo[3] and lo[0] <= float(l.split(",")[lo_i]) <= lo[2]]
+    swept = swept_times(full, sat)
+    STATE.mkdir(exist_ok=True)
+    f.write_text(json.dumps({"t": time.time(), "text": "\n".join(keep), "swept": {k: sorted(t.isoformat() for t in v) for k, v in swept.items()}}))
+    return "\n".join(keep), swept
 
 
 def pull_heat(place):
@@ -502,9 +516,9 @@ def pull_heat(place):
     hits, swept, ok = [], {}, 0
     for sat, path in FIRMS_FILES.items():
         try:
-            text = firms_file(sat, path, place)
+            text, swept_now = firms_file(sat, path, place)
             hits += firms_rows(text, sat, place, hours=HISTORY_HOURS)
-            for k, v in swept_times(text, sat).items():
+            for k, v in swept_now.items():
                 swept.setdefault(k, set()).update(v)
             ok += 1
         except Exception as e:

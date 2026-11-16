@@ -21,7 +21,8 @@ jobs:
       - uses: actions/cache@v4
         with: {path: state/live_cache.enc, key: "live-${{ github.run_id }}", restore-keys: "live-"}
       - run: python live_job.py site
-        env: {LIVE_KEY: "${{ secrets.LIVE_KEY }}", FIRMS_MAP_KEY: "${{ secrets.FIRMS_MAP_KEY }}"}
+        # LIVE_CONTACTS: burn-notice name and phone on the link too (Waters, 2026-11-16; public SCFC data, sealed in status.enc)
+        env: {LIVE_KEY: "${{ secrets.LIVE_KEY }}", FIRMS_MAP_KEY: "${{ secrets.FIRMS_MAP_KEY }}", LIVE_CONTACTS: "1"}
       - uses: actions/upload-pages-artifact@v3
         with: {path: site}
       - id: d
