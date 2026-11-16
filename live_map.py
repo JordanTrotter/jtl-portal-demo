@@ -350,12 +350,28 @@ def swept_times(text, sat):
     return out
 
 
+# Each 7-day file is the whole US (tens of MB). Pulling all four every 10 min got the laptop's address blocked by NASA
+# (2026-11-16: every MODAPS host resets the connection). A polar satellite passes about every 100 min and NRT data lags
+# hours, so once an hour per file loses nothing. ponytail: per process; the GitHub job is a fresh process every run, so
+# it still pulls each run. Real fix: the FIRMS area API (MAP_KEY, a box around the tract, kilobytes) once a key exists.
+FIRMS_EVERY_S = 3600
+_FIRMS_CACHE = {}
+
+
+def firms_file(path):
+    t, text = _FIRMS_CACHE.get(path, (0, None))
+    if text is None or time.time() - t > FIRMS_EVERY_S:
+        text = get(FIRMS + path, "text/csv", raw=True)
+        _FIRMS_CACHE[path] = (time.time(), text)
+    return text
+
+
 def pull_heat(place):
     """Every FIRMS polar satellite. One dead file only costs that satellite; all dead raises."""
     hits, swept, ok = [], {}, 0
     for sat, path in FIRMS_FILES.items():
         try:
-            text = get(FIRMS + path, "text/csv", raw=True)
+            text = firms_file(path)
             hits += firms_rows(text, sat, place, hours=HISTORY_HOURS)
             for k, v in swept_times(text, sat).items():
                 swept.setdefault(k, set()).update(v)
