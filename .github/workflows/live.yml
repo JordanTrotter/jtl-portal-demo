@@ -17,8 +17,11 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.14"}
       - run: pip install -q cryptography h5py sgp4 pillow
+      # feed cache + state between runs, sealed with LIVE_KEY (live_job.restore/keep); a new key per run, newest restored
+      - uses: actions/cache@v4
+        with: {path: state/live_cache.enc, key: "live-${{ github.run_id }}", restore-keys: "live-"}
       - run: python live_job.py site
-        env: {LIVE_KEY: "${{ secrets.LIVE_KEY }}"}
+        env: {LIVE_KEY: "${{ secrets.LIVE_KEY }}", FIRMS_MAP_KEY: "${{ secrets.FIRMS_MAP_KEY }}"}
       - uses: actions/upload-pages-artifact@v3
         with: {path: site}
       - id: d

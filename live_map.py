@@ -85,7 +85,10 @@ STATE_FIPS = dict(zip("AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA 
                       "01 02 04 05 06 08 09 10 11 12 13 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 44 45 46 47 48 49 50 51 53 54 55 56".split()))
 WIND_N, WIND_STEP = 7, 0.25  # 7 x 7 points, about 17 mi apart, covers about 50 mi each way
 AREA_MI = 50  # weather tiles (radar, clouds, Sentinel-2) only load inside this box around the property
-TTL = {"nws": 300, "fires": 600, "storms": 900, "burn": 1800, "raws": 600, "lightning": 120, "imagery": 3600, "basemaps": 21600, "fire_class": 3600, "wind": 900, "rain": 900, "climate": 21600}
+# Seconds between pulls, matched to how often each source updates (rate-limit review 2026-11-16). Alerts, fires and
+# lightning stay fast; RAWS/rain post hourly, the USFS map daily, NHC every 3-6 h, Sentinel-2 every 2-3 days.
+TTL = {"nws": 300, "fires": 600, "storms": 3600, "burn": 3600, "raws": 1800, "lightning": 120, "imagery": 10800, "basemaps": 21600,
+       "fire_class": 10800, "wind": 900, "rain": 1800, "climate": 21600}
 RAWS = "https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/PublicView_RAWS/FeatureServer/1/query"
 STAC = "https://planetarycomputer.microsoft.com/api/stac/v1/search"
 MOSAIC = "https://planetarycomputer.microsoft.com/api/data/v1/mosaic/register"
@@ -213,13 +216,22 @@ def latest_obs(stations):
     raise RuntimeError("no recent station report")
 
 
+_NWS_META = {}  # the point's grid, county and station list never change: looked up once per process, not every 5 min
+
+
+def nws_meta(place):
+    if place.name not in _NWS_META:
+        pt = get(f"https://api.weather.gov/points/{place.lat:.3f},{place.lon:.3f}")["properties"]
+        _NWS_META[place.name] = (pt, get(pt["county"])["properties"]["name"],
+                                 [f["properties"]["stationIdentifier"] for f in get(pt["observationStations"])["features"]], {})
+    return _NWS_META[place.name]
+
+
 def pull_nws(place, _):
-    pt = get(f"https://api.weather.gov/points/{place.lat:.3f},{place.lon:.3f}")["properties"]
+    pt, county, stations, seen = nws_meta(place)
     rel = pt["relativeLocation"]["properties"]
-    county = get(pt["county"])["properties"]["name"]
-    stations = [f["properties"]["stationIdentifier"] for f in get(pt["observationStations"])["features"]]
     sid, o = latest_obs(stations)
-    station = get(f"https://api.weather.gov/stations/{sid}")
+    station = seen.get(sid) or seen.setdefault(sid, get(f"https://api.weather.gov/stations/{sid}"))
     slon, slat = station["geometry"]["coordinates"][:2]
     g = get(pt["forecastGridData"])["properties"]
     fc = get(pt["forecast"])["properties"]["periods"]
@@ -358,15 +370,37 @@ def swept_times(text, sat):
     return out
 
 
-# Each 7-day file is the whole US (tens of MB). Pulling all four every 10 min got the laptop's address blocked by NASA
-# (2026-11-16: every MODAPS host resets the connection). A polar satellite passes about every 100 min and NRT data lags
-# hours, so once an hour per file loses nothing. ponytail: per process; the GitHub job is a fresh process every run, so
-# it still pulls each run. Real fix: the FIRMS area API (MAP_KEY, a box around the tract, kilobytes) once a key exists.
-FIRMS_EVERY_S = 3600
+# FIRMS (2026-11-16): the full-US 7-day files are tens of MB each; pulling all four every 10 min got the home IP blocked by
+# NASA. With a free MAP_KEY the area API returns only a box around the tract (kilobytes; limit 5000 transactions per 10 min,
+# a 7-day request may count as several). Without a key: the full files, at most once an hour per file.
+FIRMS_AREA = {"VIIRS NOAA-20": "VIIRS_NOAA20_NRT", "VIIRS NOAA-21": "VIIRS_NOAA21_NRT", "VIIRS Suomi NPP": "VIIRS_SNPP_NRT", "MODIS": "MODIS_NRT"}
+FIRMS_DAYS = 7  # history the confirmation and long-running-heat checks look back over (HISTORY_HOURS)
+FIRMS_BOX_MI = FIRE_RADIUS_MI + 10  # a little past the fire radius, so heat just outside it still confirms heat inside
+FIRMS_EVERY_S = 3600  # full-file fallback only
 _FIRMS_CACHE = {}
 
 
-def firms_file(path):
+def firms_key():
+    """MAP_KEY from the local secrets file (laptop) or the FIRMS_MAP_KEY env var (GitHub secret). Never logged."""
+    try:
+        from local_secrets import load_secret
+        return load_secret("FIRMS_MAP_KEY")
+    except ImportError:
+        return os.environ.get("FIRMS_MAP_KEY")
+
+
+def firms_box(place, mi=FIRMS_BOX_MI):
+    dlat, dlon = mi / 69.0, mi / (69.0 * math.cos(math.radians(place.lat)))
+    return f"{place.lon - dlon:.3f},{place.lat - dlat:.3f},{place.lon + dlon:.3f},{place.lat + dlat:.3f}"
+
+
+def firms_file(sat, path, place):
+    key = firms_key()
+    if key:
+        text = get(f"https://firms.modaps.eosdis.nasa.gov/api/area/csv/{key}/{FIRMS_AREA[sat]}/{firms_box(place)}/{FIRMS_DAYS}", "text/csv", raw=True)
+        if not text.startswith("latitude"):  # a bad key or an exceeded limit comes back as a 200 with a text message
+            raise RuntimeError("FIRMS area API: " + text[:80].replace(key, "<key>").strip())
+        return text
     t, text = _FIRMS_CACHE.get(path, (0, None))
     if text is None or time.time() - t > FIRMS_EVERY_S:
         text = get(FIRMS + path, "text/csv", raw=True)
@@ -379,7 +413,7 @@ def pull_heat(place):
     hits, swept, ok = [], {}, 0
     for sat, path in FIRMS_FILES.items():
         try:
-            text = firms_file(path)
+            text = firms_file(sat, path, place)
             hits += firms_rows(text, sat, place, hours=HISTORY_HOURS)
             for k, v in swept_times(text, sat).items():
                 swept.setdefault(k, set()).update(v)
