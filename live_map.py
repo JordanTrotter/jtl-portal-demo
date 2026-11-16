@@ -113,16 +113,68 @@ LIGHTNING_WATCH_MI = 10
 HEAT_WARNING_MI = 2  # GFC/SCFC wildfires and confirmed non-lightning fires: Warning to here (Waters, 2026-11-11), Watch to 15 mi
 
 
+# Request ledger (Waters, 2026-11-16): every outside request counted per source per UTC day, with data volume and each
+# push-back (HTTP 429/403/5xx, timeouts, resets), so limits are watched instead of discovered. Kept in state/usage.json
+# (60 days), which rides the sealed Actions cache too. The central database takes this over on the server.
+USAGE, _usage_lock, USAGE_DAYS = {}, threading.Lock(), 60
+
+
+def _kind(e):
+    if isinstance(e, urllib.error.HTTPError):
+        return f"HTTP {e.code}"
+    r = getattr(e, "reason", e)
+    return "timeout" if "timed out" in str(r).lower() else "reset" if "10054" in str(r) or "reset" in str(r).lower() else type(r).__name__
+
+
+def fetch(req, timeout=25):
+    """(body bytes, headers) for one request, counted in the ledger. The only place this module opens a URL."""
+    host = urllib.parse.urlparse(req.full_url).netloc
+    day = datetime.now(timezone.utc).date().isoformat()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            body, headers = r.read(), r.headers
+        err = None
+    except Exception as e:
+        body, headers, err = b"", None, _kind(e)
+        raise
+    finally:
+        with _usage_lock:
+            h = USAGE.setdefault(day, {}).setdefault(host, {"requests": 0, "bytes": 0, "errors": {}})
+            h["requests"] += 1
+            h["bytes"] += len(body)
+            if err:
+                h["errors"][err] = h["errors"].get(err, 0) + 1
+    return body, headers
+
+
+def save_usage():
+    """Add this process's counts to state/usage.json and start over (called after every status pull)."""
+    with _usage_lock:
+        new = {d: {h: {**v, 'errors': dict(v['errors'])} for h, v in hs.items()} for d, hs in USAGE.items()}
+        USAGE.clear()
+    f = STATE / "usage.json"
+    try:
+        old = json.loads(f.read_text())
+    except (OSError, ValueError):
+        old = {}
+    for day, hosts in new.items():
+        for host, v in hosts.items():
+            o = old.setdefault(day, {}).setdefault(host, {"requests": 0, "bytes": 0, "errors": {}})
+            o["requests"] += v["requests"]
+            o["bytes"] += v["bytes"]
+            for k, n in v["errors"].items():
+                o["errors"][k] = o["errors"].get(k, 0) + n
+    STATE.mkdir(exist_ok=True)
+    f.write_text(json.dumps(dict(sorted(old.items())[-USAGE_DAYS:]), indent=0))
+    return old
+
+
 def fetch_bytes(url):
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=25) as r:
-        return r.read()
+    return fetch(urllib.request.Request(url, headers={"User-Agent": UA}))[0]
 
 
 def get(url, accept="application/json", raw=False):
-    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": accept})
-    with urllib.request.urlopen(req, timeout=25) as r:
-        body = r.read().decode("utf-8", "replace")
+    body = fetch(urllib.request.Request(url, headers={"User-Agent": UA, "Accept": accept}))[0].decode("utf-8", "replace")
     return body if raw else json.loads(body)
 
 
@@ -965,9 +1017,8 @@ def class_at(im, lat, lon):
 
 def pull_fire_class(place, _):
     from PIL import Image  # only this feed needs it, so a missing install cannot take the others down
-    req = urllib.request.Request(FD_CLASS, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=25) as r:
-        body, stamp = r.read(), r.headers.get("Last-Modified")
+    body, headers = fetch(urllib.request.Request(FD_CLASS, headers={"User-Agent": UA}))
+    stamp = headers.get("Last-Modified")
     if stamp and datetime.now(timezone.utc) - parsedate_to_datetime(stamp) > timedelta(days=4):
         raise RuntimeError("fire danger class map is out of date")
     rating = class_at(Image.open(io.BytesIO(body)).convert("RGB"), place.lat, place.lon)
@@ -1077,8 +1128,7 @@ def pull_lightning(place, _):
 
 def post_json(url, body):
     req = urllib.request.Request(url, json.dumps(body).encode(), {"User-Agent": UA, "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.load(r)
+    return json.loads(fetch(req, 30)[0])
 
 
 def tract_coverage(place, features, grid=40):
@@ -1282,6 +1332,10 @@ class Live:
             data["current"]["sky"] = sky or data["current"]["sky"]  # airport text only when the property's own values are missing
         errors = {k: v["error"] for k, v in parts.items() if v["error"]}
         data["property_fire"] = property_fire(data)
+        try:
+            save_usage()
+        except OSError as e:  # the ledger must never break the status
+            print(f"usage ledger not saved: {e}", flush=True)
         data["primed"] = primed(data)
         name, why = level(data, errors)
         return {"name": self.place.name, "level": name, "why": why, "data": data,
