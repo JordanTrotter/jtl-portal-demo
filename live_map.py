@@ -95,7 +95,6 @@ STATS = "https://planetarycomputer.microsoft.com/api/data/v1/item/statistics"
 CLOUD_CLASSES = {3, 8, 9, 10}  # SCL: cloud shadow, cloud medium and high probability, thin cirrus
 TRACT_MAX_CLOUD = 1  # percent of the tract's pixels
 SEARCH_MAX_CLOUD = 95  # scene-wide cut only to skip fully overcast passes before checking the tract
-BASE_MAX_CLOUD = 5  # the rest of the map: whole scenes this clear, newest first, so the area around the tract is filled
 MAX_CHECKS = 20  # scenes checked per pull, newest first; each check is about 1 s
 GLM_BUCKET = "https://noaa-goes19.s3.amazonaws.com"
 LIGHTNING_MINUTES = 15
@@ -1079,28 +1078,30 @@ def pull_imagery(place, _):
     items = post_json(STAC, {"collections": ["sentinel-2-l2a"], "bbox": [min(lons), min(lats), max(lons), max(lats)], "limit": 100,
                              "datetime": f"{now - timedelta(days=IMAGERY_DAYS):%Y-%m-%dT00:00:00Z}/{now:%Y-%m-%dT%H:%M:%SZ}",
                              "sortby": [{"field": "datetime", "direction": "desc"}], "query": {"eo:cloud_cover": {"lt": SEARCH_MAX_CLOUD}}})["features"]
-    clear = []
-    for f in items[:MAX_CHECKS]:  # newest first; stop once clear scenes cover the whole tract
+    # One pass, one date, everywhere (Waters, 2026-11-16: a clear box over the tract inside a patchwork of other days
+    # read as a seam). Newest date whose clear scenes cover the whole tract wins, and the map draws every scene of that
+    # date, clouds outside the tract and all. Only if no single date covers the tract do several dates combine.
+    day = lambda f: f["properties"]["datetime"][:10]
+    clear, scenes = [], None
+    for f in items[:MAX_CHECKS]:  # newest first
         try:
             if tract_cloud(place, f["id"]) <= TRACT_MAX_CLOUD:
                 clear.append(f)
         except Exception as e:
             print(f"Sentinel-2 cloud check {f['id']} failed: {e}", flush=True)
-        if clear and all(c["date"] != "none" for c in tract_coverage(place, clear)):
+        same = [c for c in clear if day(c) == day(f)]
+        if same and all(c["date"] != "none" for c in tract_coverage(place, same)):
+            scenes = [x for x in items if day(x) == day(f)]
+            clear = same
             break
     if not clear:
         raise RuntimeError("no scene clear over the tract in the window")
-    # newest pixel wins and gaps fall through to older clear scenes. Outside the tract a chosen scene can still show its clouds.
-    # two mosaics: the tract's own clear passes (drawn only over the tract's box) on top of a regional clear-scene fill.
     # The mosaic service needs the collection named and takes an "or" of ids, not "in".
     coll = {"op": "=", "args": [{"property": "collection"}, "sentinel-2-l2a"]}
-    newest = [{"field": "datetime", "direction": "desc"}]
-    pick = {"op": "or", "args": [{"op": "=", "args": [{"property": "id"}, f["id"]]} for f in clear]}
-    tract = post_json(MOSAIC, {"filter-lang": "cql2-json", "filter": {"op": "and", "args": [coll, pick]}, "sortby": newest})
-    base = post_json(MOSAIC, {"filter-lang": "cql2-json", "filter": {"op": "and", "args": [coll,
-        {"op": ">=", "args": [{"property": "datetime"}, f"{now - timedelta(days=IMAGERY_DAYS):%Y-%m-%dT00:00:00Z}"]},
-        {"op": "<=", "args": [{"property": "eo:cloud_cover"}, BASE_MAX_CLOUD]}]}, "sortby": newest})
-    return {"mosaic": tract["id"], "base": base["id"], "coverage": tract_coverage(place, clear), "days": IMAGERY_DAYS}
+    pick = {"op": "or", "args": [{"op": "=", "args": [{"property": "id"}, f["id"]]} for f in scenes or clear]}
+    m = post_json(MOSAIC, {"filter-lang": "cql2-json", "filter": {"op": "and", "args": [coll, pick]},
+                           "sortby": [{"field": "datetime", "direction": "desc"}]})
+    return {"mosaic": m["id"], "base": m["id"], "coverage": tract_coverage(place, clear), "days": IMAGERY_DAYS, "single_date": bool(scenes)}
 
 
 # --- status ---------------------------------------------------------------
