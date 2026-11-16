@@ -43,7 +43,7 @@ FIRMS_FILES = {
 HEAT_HOURS = 24  # live fires are the last 24 hours; the 7 day files are history for the checks below
 HISTORY_HOURS = 24 * 7
 PASS_GAP_MIN = 20  # two detections this far apart are separate satellite passes, so a glint or one bad scan cannot confirm
-LONG_RUN_DAYS = 3  # heat on this many separate days is a pile, mill or landfill, not a new fire
+LONG_RUN_DAYS = 3  # heat on this many separate days = "Continuous Heat Source" (mill, pile, landfill), not a new fire
 # US lightning fires: about half reported the same day, 71% within 3 days, 77% within 7 (Schultz et al. 2019, Fire 2:18).
 # Past 3 days the gain is small and a big storm leaves strikes near almost any field burn, so the fast-track stops there.
 # A later fire is still caught by the 2-pass rule, which only costs the hours until the next pass.

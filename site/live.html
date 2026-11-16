@@ -90,7 +90,7 @@ button.row:hover,button.row:focus-visible{background:var(--line)}
         <span><i class="dot" style="background:#ff2d92"></i>Prescribed fire</span>
         <span><i class="dot" style="background:#ff9f0a"></i>Reported burn</span>
         <span><i class="dot" style="background:#ffd60a"></i>Possible fire, 1 satellite pass</span>
-        <span><i class="dot" style="background:#8e8e93"></i>Out, contained, or long-running heat</span>
+        <span><i class="dot" style="background:#8e8e93"></i>Out, contained, or continuous heat source</span>
         <span><svg width="12" height="14" viewBox="4 0 18 28" style="margin-right:4px;vertical-align:-2px"><path d="M15 1L5 15h7L8 27 21 10h-8l6-9z" fill="#ffe600" stroke="#000" stroke-width="1.5"/></svg>Lightning flash</span>
       </div>
       <button class="base-btn" id="zoom">Show 50 mile area</button>
@@ -486,7 +486,7 @@ function flyTo(at, title, text, zoom = 13, link) {
 $('fires').onclick = e => { const b = e.target.closest('button[data-i]'); if (!b) return; const f = fires[+b.dataset.i]; flyTo([f.lon, f.lat], label(f), detail(f), 13, f.link); };
 $('lightning').onclick = e => { if (!e.target.closest('button') || !flashes[0]) return; const f = flashes[0]; flyTo([f.lon, f.lat], 'Closest lightning flash', flashText(f), 10); };
 
-const heatName = f => f.long_run ? 'Long-running heat (pile, mill or landfill?)' : f.active === false ? `Heat not seen on ${f.misses} later clear pass${f.misses > 1 ? 'es' : ''}` : f.lightning ? 'Likely lightning fire' : f.confirmed ? 'Fire, seen on 2 satellite passes' : 'Possible fire, 1 satellite pass';
+const heatName = f => f.long_run ? 'Continuous Heat Source' : f.active === false ? `Heat not seen on ${f.misses} later clear pass${f.misses > 1 ? 'es' : ''}` : f.lightning ? 'Likely lightning fire' : f.confirmed ? 'Fire, seen on 2 satellite passes' : 'Possible fire, 1 satellite pass';
 const label = f => (f.kind === 'heat' ? heatName(f) : {wildfire:'Wildfire', rx:'Prescribed fire', burn:'Reported burn'}[f.kind]) + (f.name ? `: ${f.name}` : '');
 const size = f => f.acres ? `${f.acres} ac` : f.kind === 'burn' || f.kind === 'heat' ? 'Size not reported' : 'Size not listed yet';
 const detail = f => [`${f.miles} mi ${f.dir}`, size(f), f.sat ? f.sat + (f.scans > 1 ? `, ${f.scans} scans` : '') : '', f.contained ? `${f.contained}% contained` : '',
