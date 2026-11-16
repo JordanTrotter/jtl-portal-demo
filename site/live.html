@@ -74,7 +74,7 @@ button.row:hover,button.row:focus-visible{background:var(--line)}
     <div id="map"></div>
     <div id="layer-panel">
       <div class="basemaps">
-        <button class="base-btn active" data-base="sat" id="esri-label">Esri high resolution</button>
+        <button class="base-btn active" data-base="sat" id="usgs-label">USGS</button>
         <button class="base-btn" data-base="naip" id="naip-label">NAIP</button>
         <button class="base-btn" data-base="recent" id="s2-label">Sentinel-2</button>
         <div class="note" id="base-note"></div>
@@ -148,9 +148,8 @@ const AREA = parent.LIVE_CFG.area, inArea = AREA ? {bounds:AREA} : {};
 
 // a big tile cache keeps zoomed-past tiles in memory, so zooming back out is instant
 const map = new maplibregl.Map({container:'map', attributionControl:{compact:true}, maxTileCacheSize:3000, refreshExpiredTiles:false, style:{version:8, sources:{
-  sat:{type:'raster', tiles:['https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'], tileSize:256, maxzoom:19, attribution:'Imagery &copy; Esri'},
-  // Esri switches to a greener mosaic at z10 and below, which showed as a box while z11 tiles loaded.
-  // USGS NAIP matches Esri's z11+ look, so it covers the zoomed-out views instead.
+  // public-domain imagery only (Waters, 2026-11-16: Esri's keyless tiles aren't licensed for commercial use)
+  sat:{type:'raster', tiles:['https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}'], tileSize:256, maxzoom:16, attribution:'Imagery: USGS'},
   usgs:{type:'raster', tiles:['https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}'], tileSize:256, maxzoom:16, attribution:'Imagery: USGS NAIP'},
   naip:{type:'raster', tiles:[BLANK], tileSize:256, maxzoom:18, attribution:'Imagery: USDA NAIP, Microsoft Planetary Computer'},
   recent:{type:'raster', tiles:[BLANK], tileSize:256, ...inArea, attribution:'Sentinel-2: ESA, Microsoft Planetary Computer'},
@@ -212,20 +211,13 @@ map.on('load', async () => {
   map.once('idle', prefetchTract);
 });
 
-// Warm the browser cache with Esri tiles over the property, z12-17 (about 770 tiles for a 2,500 ac tract).
-// Esri sends a 24 h cache header, so zooming around the tract then reads from disk, not the network.
-// ponytail: tract box only, 4 at a time; widen PREFETCH_PAD or add z18 (about 4x the tiles) if needed
-const PREFETCH_ZOOMS = [12, 13, 14, 15, 16, 17], PREFETCH_PAD = 0.01, PREFETCH_MAX = 1500;
+// Warm the browser cache with USGS tiles around the property, z8-11 (about 40 tiles). The tract-level z12-17 preload went
+// was dropped (2026-11-16); NAIP isn't preloaded (1 h cache, 0.7-1 s a tile): self-hosted tiles on the server are the fix.
+const PREFETCH_MAX = 200;
 async function prefetchTract() {
   const tile = (lng, lat, z) => { const n = 2 ** z, r = lat * Math.PI / 180;
     return [Math.floor((lng + 180) / 360 * n), Math.floor((1 - Math.asinh(Math.tan(r)) / Math.PI) / 2 * n)]; };
   const urls = [];
-  for (const z of PREFETCH_ZOOMS) {
-    const [x0, y0] = tile(bounds.getWest() - PREFETCH_PAD, bounds.getNorth() + PREFETCH_PAD, z);
-    const [x1, y1] = tile(bounds.getEast() + PREFETCH_PAD, bounds.getSouth() - PREFETCH_PAD, z);
-    for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++)
-      urls.push(`https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`);
-  }
   // USGS fills below z11 (and is the basemap until a mosaic arrives): z8-11 over a wider box, about 40 tiles
   for (const z of [8, 9, 10, 11]) {
     const [x0, y0] = tile(bounds.getWest() - .3, bounds.getNorth() + .3, z), [x1, y1] = tile(bounds.getEast() + .3, bounds.getSouth() - .3, z);
@@ -248,7 +240,7 @@ const LINKED = {radar:['radar', 'lightning']};
 let mosaic, naipMosaic, lastTick;
 window.liveMap = map;  // the portal syncs its stand map's view with this one
 // sharp imagery first; Sentinel-2 is newer but 10 m, one click away. Inside the portal, the stand map's choice
-let base = (window !== parent && parent.portalBase && parent.portalBase()) || 'naip';  // NAIP first (Waters, 2026-11-12); Esri until its mosaic is in
+let base = (window !== parent && parent.portalBase && parent.portalBase()) || 'naip';  // NAIP first (Waters, 2026-11-12); USGS until its mosaic is in
 function setBase() {
   const b = (base === 'recent' && !mosaic) || (base === 'naip' && !naipMosaic) ? 'sat' : base;  // each one once its mosaic is in
   ['recent', 'recent-tract'].forEach(id => map.setLayoutProperty(id, 'visibility', b === 'recent' ? 'visible' : 'none'));
@@ -259,7 +251,7 @@ function setBase() {
 document.querySelectorAll('[data-base]').forEach(b => b.onclick = () => { base = b.dataset.base; setBase(); });
 window.liveBase = v => { if (v) { base = v; setBase(); } return base; };  // the portal reads and sets it on tab switches
 // NAIP goes on only if one of its tiles at the map center loads: its mosaic ids expire 24 h after they are made and an
-// expired one 404s every tile, which left a blank map (2026-11-13). Until then Esri shows.
+// expired one 404s every tile, which left a blank map (2026-11-13). Until then USGS shows.
 let naipTried;
 const tileOk = url => { const c = map.getCenter(), z = 14, n = 2 ** z;
   const x = Math.floor((c.lng + 180) / 360 * n), y = Math.floor((1 - Math.asinh(Math.tan(c.lat * Math.PI / 180)) / Math.PI) / 2 * n);
@@ -580,15 +572,14 @@ async function refresh(force) {
   const short = d => new Date(d + 'T12:00:00').toLocaleDateString([], {month:'short', day:'numeric'});
   const newest = img && img.coverage.find(c => c.date !== 'none');
   $('s2-label').textContent = newest ? `Sentinel-2, ${short(newest.date)}` : 'Sentinel-2';
-  // sharp imagery is dated by month and year at the tract (Esri's can be years old)
+  // NAIP is dated by month and year at the tract (flights are 2-3 years apart)
   const my = d => new Date(d + 'T12:00:00').toLocaleDateString([], {month:'short', year:'numeric'}), bm = s.data.basemaps || {};
-  $('esri-label').textContent = bm.esri ? `Esri, ${my(bm.esri.date)}` : 'Esri high resolution';
   $('naip-label').textContent = bm.naip ? `NAIP, ${my(bm.naip.date)}` : 'NAIP';
   if (bm.naip && bm.naip.mosaic !== naipTried) {
     const id = naipTried = bm.naip.mosaic;
     tileOk(naipTile(id)).then(ok => { if (ok) { naipMosaic = id; map.getSource('naip').setTiles([naipTile(id)]); setBase(); } });
   }
-  $('base-note').textContent = img ? `Newest clear image on tract: ${img.coverage.map(c => c.date === 'none' ? `${c.pct}% no image` : `${short(c.date)} ${c.pct}%`).join(', ')}.` : 'Sentinel-2 unavailable, showing Esri.';
+  $('base-note').textContent = img ? `Newest clear image on tract: ${img.coverage.map(c => c.date === 'none' ? `${c.pct}% no image` : `${short(c.date)} ${c.pct}%`).join(', ')}.` : 'Sentinel-2 unavailable, showing USGS.';
   if (s.data.fires?.failed?.length) $('fires').innerHTML += `<div class="sub" style="color:var(--watch)">Missing: ${esc(s.data.fires.failed.join(', '))}</div>`;
   $('burn').textContent = s.data.burn ? s.data.burn.note : 'Unavailable, check the state forestry agency.';
   const cl = s.data.climate || {}, r = cl.rain, dr = cl.drought;

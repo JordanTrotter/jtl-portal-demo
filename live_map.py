@@ -1195,26 +1195,15 @@ def tract_cloud(place, item_id):
     return cloud_pct(next(iter(stats["properties"]["statistics"].values()))["histogram"])
 
 
-ESRI_META = "https://services.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/identify"
-
-
 def pull_basemaps(place, _):
-    """Capture date and resolution of the sharp basemaps at the tract center (Waters, 2026-11-12: Esri's
-    image there was years old with no date shown). Esri: its own imagery metadata. NAIP: newest USDA flight
-    over the tract in Planetary Computer's catalog, plus a newest-first mosaic the map draws from (cached tiles,
-    about 0.6 s each; USGS's NAIP ImageServer renders on demand at 2 to 12 s a tile)."""
-    pt = f"{place.lon},{place.lat}"
-    box = f"{place.lon - .01},{place.lat - .01},{place.lon + .01},{place.lat + .01}"
-    esri = get(ESRI_META + "?" + urllib.parse.urlencode({"geometry": pt, "geometryType": "esriGeometryPoint", "sr": 4326, "layers": "all",
-               "tolerance": 0, "mapExtent": box, "imageDisplay": "400,400,96", "returnGeometry": "false", "f": "json"}))
-    a = next((r["attributes"] for r in esri.get("results", []) if r["layerName"] == "World Imagery"), {})
-    d = str(a.get("DATE (YYYYMMDD)", ""))
+    """NAIP: newest USDA flight over the tract in Planetary Computer's catalog (its date labels the button), plus a newest-first
+    mosaic the map draws from (cached tiles, about 0.6 s each; USGS's NAIP ImageServer renders on demand at 2 to 12 s a tile).
+    Esri's capture-date lookup went with Esri imagery (2026-11-16: keyless tiles aren't licensed for commercial use)."""
     newest = [{"field": "datetime", "direction": "desc"}]
     n = (post_json(STAC, {"collections": ["naip"], "intersects": {"type": "Point", "coordinates": [place.lon, place.lat]},
                           "limit": 1, "sortby": newest})["features"] or [None])[0]
     mosaic = post_json(MOSAIC, {"filter-lang": "cql2-json", "filter": {"op": "=", "args": [{"property": "collection"}, "naip"]}, "sortby": newest})
-    return {"esri": {"date": f"{d[:4]}-{d[4:6]}-{d[6:8]}", "res": float(a["RESOLUTION (M)"])} if d.isdigit() and len(d) == 8 else None,
-            "naip": {"date": n["properties"]["datetime"][:10], "res": n["properties"].get("gsd"), "mosaic": mosaic["id"]} if n else None}
+    return {"naip": {"date": n["properties"]["datetime"][:10], "res": n["properties"].get("gsd"), "mosaic": mosaic["id"]} if n else None}
 
 
 def pull_imagery(place, _):
