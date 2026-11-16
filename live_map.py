@@ -126,18 +126,53 @@ def _kind(e):
     return "timeout" if "timed out" in str(r).lower() else "reset" if "10054" in str(r) or "reset" in str(r).lower() else type(r).__name__
 
 
+# Backoff per source: a push-back (429, 403, 503, connection reset) doubles that host's wait (1 min, 2, 4 ... up to 6 h, or
+# the host's own Retry-After); every clean request halves it back. While a host is waiting, requests to it are skipped
+# without touching the network. Kept in state/backoff.json, so the GitHub job honors it across runs.
+PUSHBACK = ("HTTP 429", "HTTP 403", "HTTP 503", "reset")
+BACKOFF_BASE_S, BACKOFF_MAX_S = 60, 6 * 3600
+BACKOFF = {}  # host -> {"level": n, "until": epoch}
+
+
+def load_backoff():
+    try:
+        BACKOFF.update(json.loads((STATE / "backoff.json").read_text()))
+    except (OSError, ValueError):
+        pass
+
+
+def backoff_note(host, err, retry_after=None):
+    with _usage_lock:
+        b = BACKOFF.setdefault(host, {"level": 0, "until": 0})
+        if err in PUSHBACK:
+            b["level"] += 1
+            wait = min(BACKOFF_BASE_S * 2 ** (b["level"] - 1), BACKOFF_MAX_S)
+            b["until"] = time.time() + max(wait, retry_after or 0)
+        elif err is None and b["level"]:
+            b["level"] -= 1
+        if not b["level"] and b["until"] < time.time():
+            BACKOFF.pop(host, None)
+
+
 def fetch(req, timeout=25):
     """(body bytes, headers) for one request, counted in the ledger. The only place this module opens a URL."""
     host = urllib.parse.urlparse(req.full_url).netloc
     day = datetime.now(timezone.utc).date().isoformat()
+    wait = BACKOFF.get(host, {}).get("until", 0) - time.time()
+    if wait > 0:
+        raise RuntimeError(f"backing off {host} for {round(wait / 60)} more min after it pushed back")
+    retry = None
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             body, headers = r.read(), r.headers
         err = None
     except Exception as e:
         body, headers, err = b"", None, _kind(e)
+        ra = getattr(e, "headers", None) and e.headers.get("Retry-After")
+        retry = int(ra) if ra and str(ra).isdigit() else None
         raise
     finally:
+        backoff_note(host, err, retry)
         with _usage_lock:
             h = USAGE.setdefault(day, {}).setdefault(host, {"requests": 0, "bytes": 0, "errors": {}})
             h["requests"] += 1
@@ -166,6 +201,8 @@ def save_usage():
                 o["errors"][k] = o["errors"].get(k, 0) + n
     STATE.mkdir(exist_ok=True)
     f.write_text(json.dumps(dict(sorted(old.items())[-USAGE_DAYS:]), indent=0))
+    with _usage_lock:
+        (STATE / "backoff.json").write_text(json.dumps(BACKOFF))
     return old
 
 
@@ -1290,6 +1327,7 @@ def best_conditions(place, airport, raws):
 
 class Live:
     def __init__(self, place):
+        load_backoff()  # after live_job.restore() has put the state files back
         self.place = place
         self.cache = {}
         self.lock = threading.Lock()

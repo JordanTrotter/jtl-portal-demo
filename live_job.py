@@ -56,6 +56,7 @@ def main(site):
     b = unseal(json.loads((live / "boundary.enc").read_text()), key)
     lv = live_map.Live(live_map.Place(b["geojson"], b["name"]))
     restore(lv, live_map.STATE, key)
+    live_map.load_backoff()  # the backoff file came back with the restore
     status = lv.status()
     (live / "status.enc").write_text(json.dumps(seal(status, key)))
     keep(lv, live_map.STATE, key)
