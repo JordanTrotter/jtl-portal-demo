@@ -25,7 +25,9 @@ HERE = Path(__file__).parent
 # NWS rejects an empty User-Agent but does not need contact info; no email or personal detail goes out with any request
 UA = "jt-live-map/0.2"
 FIRE_RADIUS_MI = 50  # 25 until 2026-11-12; 50 for the partner demo so a live fire is likelier to show (page text says 50 too)
-RECENT_DAYS = 7
+RECENT_DAYS = 7  # contained fires this recent are counted for the fire risk panel
+OUT_SHOW_DAYS = 2  # ...but only this recent ones stay on the map (Waters, 2026-11-16: week-old contained fires read as live)
+NEARBY_FIRES_MI, NEARBY_FIRES_N = 25, 3  # this many wildfires this close in RECENT_DAYS -> at least Moderate fire risk
 STORM_RADIUS_MI = 500
 INACTIVE = {"contained", "controlled", "mopped up", "out", "closed"}
 FIRESPONSE = {"GA": "georgiafc", "SC": "scfc"}
@@ -242,6 +244,8 @@ def pull_nws(place, _):
             "humidity_min_24h": min((v[0] for v in within(g.get("relativeHumidity"), now, 24)), default=None),
             "wind_20ft_mph": _kmh(at(g.get("twentyFootWindSpeed"), now)),
             "gust_max_24h": _kmh(max((v[0] for v in within(g.get("windGust"), now, 24)), default=None)),
+            "humidity_min_tomorrow": min((v[0] for v in within(g.get("relativeHumidity"), now + timedelta(hours=24), 24)), default=None),
+            "gust_max_tomorrow": _kmh(max((v[0] for v in within(g.get("windGust"), now + timedelta(hours=24), 24)), default=None)),
             "mixing_height_ft": _round(at(g.get("mixingHeight"), now), 3.28084, 100),
             "transport_wind_mph": _kmh(at(g.get("transportWindSpeed"), now)),
             "transport_wind_dir": compass(at(g.get("transportWindDirection"), now)),
@@ -285,6 +289,7 @@ def pull_incidents(place, site):
         out.append({"kind": "rx" if rx else "wildfire", "active": active, "source": site, "name": p.get("Name"),
                     "status": p.get("Status"), "acres": p.get("Size"), "contained": p.get("Contained"),
                     "county": p.get("AdminDivision"), "reported": utc(p.get("reporteddate")), "number": p.get("Number"),
+                    "days_ago": p.get("differenceOfDays") or 0,
                     "link": f"https://{site}.firesponse.com/public/", **place.locate(lat, lon)})
     return out
 
@@ -461,6 +466,9 @@ def pull_fires(place, _):
             print(f"{name} failed: {e}", flush=True)
             failed.append(name)
     official = [f for k, v in got.items() if k not in ("FIRMS", "GOES") for f in v]
+    # every wildfire in the last week counts toward the risk panel; contained ones older than OUT_SHOW_DAYS leave the map
+    recent = [{"miles": f["miles"], "reported": f["reported"]} for f in official if f.get("kind") == "wildfire"]
+    official = [f for f in official if f.get("active") is not False or f.get("days_ago", 0) <= OUT_SHOW_DAYS]
     firms, goes = got.get("FIRMS") or {}, got.get("GOES", [])
     history = firms.get("hits", [])
     now = datetime.now(timezone.utc)
@@ -476,7 +484,7 @@ def pull_fires(place, _):
         print(f"later-pass check failed: {e}", flush=True)
     # finest location wins: official, then polar 375 m-1 km, then GOES only where nothing else sees it
     fine = merge_fire(official, polar)
-    return {"items": merge_fire(fine, goes, GOES_SPACING_MI), "failed": failed}
+    return {"items": merge_fire(fine, goes, GOES_SPACING_MI), "failed": failed, "recent_wildfires": recent}
 
 
 def day(t):
@@ -716,10 +724,54 @@ def pull_climate(place, nws):
     return out
 
 
+# Property fire risk (Waters, 2026-11-16: the USFS national class read Very Low through a dry spell at the test tract, 30-day rain
+# 17% of normal). The rating is the highest of: USFS class, the rain deficit and drought at the property, and the NWS
+# point forecast's humidity and gusts. Each source names itself in the drivers, so the owner sees why.
+DRY_RULES = ((25, 0.25, "High"), (50, None, "Moderate"))  # 30-day rain under X% of normal [and under Y in in 3 days] -> rating
+DROUGHT_RULES = {2: "High", 3: "High", 4: "Very High", 1: "Moderate"}  # Drought Monitor class at the county -> rating
+WEATHER_RULES = ((25, 20, "Very High"), (30, 15, "High"))  # min humidity at or under X% with gusts at or over Y mph -> rating
+
+
+def property_fire(data):
+    """{"today": {rating, drivers}, "tomorrow": {...}}; drivers = [(rating, why)], strongest first. None when nothing is known."""
+    up = lambda r: FD_NAMES.index(r)
+    fc, cl, fw = data.get("fire_class") or {}, data.get("climate") or {}, (data.get("nws") or {}).get("fire_weather") or {}
+    base = []
+    pct, r3 = ((cl.get("rain") or {}).get("pct_30d")), (data.get("rain") or {}).get("inches")
+    if pct is not None:
+        for lim, r3lim, rating in DRY_RULES:
+            if pct < lim and (r3lim is None or (r3 is not None and r3 < r3lim)):
+                base.append((rating, f"Rain {pct:.0f}% of normal over 30 days" + (f", {r3:.2f} in last 3 days" if r3 is not None else "")))
+                break
+    cat = (cl.get("drought") or {}).get("category", "")
+    d = next((k for k in range(4, 0, -1) if f"(D{k})" in cat), None)
+    if d:
+        base.append((DROUGHT_RULES[d], f"{cat} in the county (Drought Monitor)"))
+    near = [f for f in (data.get("fires") or {}).get("recent_wildfires", []) if f["miles"] <= NEARBY_FIRES_MI]
+    if len(near) >= NEARBY_FIRES_N:
+        base.append(("Moderate", f"{len(near)} wildfires within {NEARBY_FIRES_MI} mi in the last {RECENT_DAYS} days (state forestry)"))
+    out = {}
+    for day, usfs, rh, gust in (("today", (fc.get("today") or {}).get("rating"), fw.get("humidity_min_24h"), fw.get("gust_max_24h")),
+                                ("tomorrow", fc.get("rating") if fc.get("date") != (fc.get("today") or {}).get("date") else None,
+                                 fw.get("humidity_min_tomorrow"), fw.get("gust_max_tomorrow"))):
+        drv = list(base)
+        if usfs:
+            drv.append((usfs, f"US Forest Service class {usfs}"))
+        if rh is not None and gust is not None:
+            hit = next((r for lim, g, r in WEATHER_RULES if rh <= lim and gust >= g), None)
+            drv.append((hit or "Very Low", f"Forecast low humidity {rh:.0f}%, gusts {gust} mph" + ("" if hit else " (not fire weather)")))
+        known = [x for x in drv if x[0] in FD_NAMES]
+        if known:
+            known.sort(key=lambda x: -up(x[0]))
+            out[day] = {"rating": known[0][0], "drivers": [{"rating": r, "why": w} for r, w in known]}
+    return out or None
+
+
 def primed(data):
     """Dry fuels and no soaking rain. Unknown fire danger or rain reads as not primed, so a dead feed cannot raise a caution."""
     rain = (data.get("rain") or {}).get("inches")
-    return (data.get("fire_class") or {}).get("rating") in PRIMED_RATINGS and rain is not None and rain < PRIMED_RAIN_IN
+    today = (((data.get("property_fire") or property_fire(data)) or {}).get("today") or {}).get("rating")
+    return today in PRIMED_RATINGS and rain is not None and rain < PRIMED_RAIN_IN
 
 
 def wind_obs(rows, now):
@@ -1047,9 +1099,9 @@ def level(data, errors):
         why["Watch"].append(f"Lightning hit the property {hold[:10]} with fuels primed, watch for holdover fire")
     if near:  # lightning alone is only ever a caution; a fire it starts is caught by the heat rules above
         why["Watch"].append("Lightning over the property" if near[0]["miles"] == 0 else f"Lightning {near[0]['miles']} mi {near[0]['dir']}")
-    rated = ((data.get("fire_class") or {}).get("today") or {}).get("rating")  # USFS fire danger class for today
-    if rated in ("Very High", "Extreme"):
-        why["Watch"].append(f"USFS fire danger {rated} today")
+    pf = ((data.get("property_fire") or property_fire(data)) or {}).get("today") or {}  # property fire risk today (USFS, dryness, weather)
+    if pf.get("rating") in ("Very High", "Extreme"):
+        why["Watch"].append(f"Fire danger {pf['rating']} today: " + pf["drivers"][0]["why"])
     if (data.get("burn") or {}).get("status") == "restricted":
         why["Watch"].append("Burn restriction")
     for name in ("Warning", "Watch"):
@@ -1131,6 +1183,7 @@ class Live:
             sky = sky_words(((data.get("nws") or {}).get("conditions") or {}).get("sky_cover"), (data.get("rain") or {}).get("last_hour"))
             data["current"]["sky"] = sky or data["current"]["sky"]  # airport text only when the property's own values are missing
         errors = {k: v["error"] for k, v in parts.items() if v["error"]}
+        data["property_fire"] = property_fire(data)
         data["primed"] = primed(data)
         name, why = level(data, errors)
         return {"name": self.place.name, "level": name, "why": why, "data": data,

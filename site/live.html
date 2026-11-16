@@ -548,12 +548,14 @@ async function refresh(force) {
   const plain = {'Very Low':'Wildfires are unlikely to spread much.', 'Low':'A wildfire would be easy to control.', 'Moderate':'A wildfire could take heavy equipment to control.',
     'High':'A wildfire would be hard to control.', 'Very High':'A wildfire could spread fast and be very hard to control.', 'Extreme':'A wildfire would be dangerous and likely out of control.'};
   const fcDate = d => new Date(d + 'T12:00:00').toLocaleDateString([], {month:'short', day:'numeric'});
-  // one source: USFS fire danger class. Today = what yesterday's map said for today (kept by the server); tomorrow = the map as posted
-  const day = (label, r) => `<div style="margin:8px 0 2px"><b>${label}</b></div><div class="badge ${r.rating.replace(' ', '')}">${r.rating}</div><div>${plain[r.rating]}</div>`;
-  const tom = fc && fc.date && fc.date !== new Date().toLocaleDateString('en-CA') ? fc : null;
-  $('danger').innerHTML = fc ? (fc.today ? day('Today', fc.today) : '<div class="sub">Today: no rating yet, it fills in once a full day has been recorded.</div>') + (tom ? day('Tomorrow, ' + fcDate(tom.date), tom) : '') +
-    '<div class="sub" style="margin-top:4px">US Forest Service fire danger class at the property. Check local signs and bans before burning.</div>'
-    : '<div class="none">Forest Service rating unavailable</div>';
+  // property fire risk: the highest of the USFS class, rain deficit and drought at the property, and the NWS point
+  // forecast's humidity and gusts (live_map.property_fire); every source that counted is listed under the badge
+  const pf = s.data.property_fire, tomDate = new Date(Date.now() + 864e5).toLocaleDateString('en-CA');
+  const day = (label, r) => `<div style="margin:8px 0 2px"><b>${label}</b></div><div class="badge ${r.rating.replace(' ', '')}">${r.rating}</div><div>${plain[r.rating]}</div>` +
+    `<div class="sub">${r.drivers.map((d, i) => `${i ? '' : '<b>'}${esc(d.why)}: ${esc(d.rating)}${i ? '' : '</b>'}`).join('<br>')}</div>`;
+  $('danger').innerHTML = pf ? (pf.today ? day('Today', pf.today) : '') + (pf.tomorrow ? day('Tomorrow, ' + fcDate(tomDate), pf.tomorrow) : '') +
+    '<div class="sub" style="margin-top:4px">Rated at the property: the highest of the Forest Service class, rain against normal, drought, and the forecast humidity and wind. Check local signs and bans before burning.</div>'
+    : '<div class="none">Fire danger unavailable</div>';
   const c = s.data.current;
   if (c) {
     $('now').innerHTML = facts([['Temperature', show(c.temp_f, ' F')], ['Humidity', show(c.humidity, '%')],
@@ -563,7 +565,7 @@ async function refresh(force) {
   } else $('now').innerHTML = '<div class="none">No station reporting nearby</div>';
   flashes = s.data.lightning ? s.data.lightning.items : [];
   $('lightning').innerHTML = !s.data.lightning ? '<div class="none">Unavailable</div>' : flashes.length ? `<button class="row"><b>${flashes.length} flashes within 50 mi, last ${s.data.lightning.minutes} min</b><span>Closest ${esc(flashText(flashes[0]))}, click to view</span></button>` : `<div class="none">No flashes within 50 mi, last ${s.data.lightning.minutes} min</div>`;
-  const rain = s.data.rain, rating = s.data.fire_class?.rating, hold = s.data.lightning?.holdover;
+  const rain = s.data.rain, rating = s.data.property_fire?.today?.rating, hold = s.data.lightning?.holdover;
   $('lightning').innerHTML += `<div class="sub" style="margin-top:4px${s.data.primed ? ';color:var(--watch)' : ''}">Lightning fire risk: ${s.data.primed ? 'primed' : 'not primed'}` +
     ` (fire danger ${esc(rating || 'unknown')}, rain ${rain ? rain.inches.toFixed(2) + ' in' : 'unknown'} last ${rain?.days || 3} days)` +
     (hold ? `. Last strike on the property ${clock(hold)}` : '') + '</div>';
