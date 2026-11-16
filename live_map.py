@@ -466,6 +466,7 @@ FIRMS_AREA = {"VIIRS NOAA-20": "VIIRS_NOAA20_NRT", "VIIRS NOAA-21": "VIIRS_NOAA2
 FIRMS_DAYS = 7  # history the confirmation and long-running-heat checks look back over (HISTORY_HOURS)
 FIRMS_BOX_MI = FIRE_RADIUS_MI + 10  # a little past the fire radius, so heat just outside it still confirms heat inside
 FIRMS_EVERY_S = 3600  # full-file fallback only: at most one download per file per hour, across GitHub runs too
+FIRMS_KEYLESS = False  # full-US file fallback without a key: off by Waters' call (2026-11-16) after NASA blocked the home IP
 
 
 def firms_key():
@@ -492,6 +493,8 @@ def firms_file(sat, path, place):
         if not text.startswith("latitude"):  # a bad key or an exceeded limit comes back as a 200 with a text message
             raise RuntimeError("FIRMS area API: " + text[:80].replace(key, "<key>").strip())
         return text, swept_times(text, sat)
+    if not FIRMS_KEYLESS:  # Waters, 2026-11-16: no NASA requests at all until the registered key is in (set_firms_key.py)
+        raise RuntimeError("no FIRMS key yet: satellite heat off until set_firms_key.py is run")
     f = STATE / f"firms_{sat.replace(' ', '_')}.json"
     try:
         c = json.loads(f.read_text())
@@ -513,6 +516,8 @@ def firms_file(sat, path, place):
 
 def pull_heat(place):
     """Every FIRMS polar satellite. One dead file only costs that satellite; all dead raises."""
+    if not firms_key() and not FIRMS_KEYLESS:  # paused on purpose (no key yet): not a failure, GOES still watches
+        return {"hits": [], "swept": {}, "paused": True}
     hits, swept, ok = [], {}, 0
     for sat, path in FIRMS_FILES.items():
         try:
