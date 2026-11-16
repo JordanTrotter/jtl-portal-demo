@@ -8,6 +8,7 @@ import argparse
 import csv
 import io
 import json
+from collections import defaultdict
 import math
 import re
 import secrets
@@ -623,16 +624,54 @@ def retire(h, looks, swept, place, look_at=None):
 
 # --- burn status and storms -----------------------------------------------
 
+COUNTY_SAMPLES = 16
+_COUNTIES = {}
+
+
+def counties(place):
+    """{county: state} for every county the boundary touches (Waters, 2026-11-16: large tracts cross county lines).
+    NWS county zone at evenly spaced boundary vertices plus the center; cached per process, the boundary doesn't move.
+    ponytail: sampled vertices, so a county touched only by a sliver between samples can be missed; raise COUNTY_SAMPLES."""
+    if place.name not in _COUNTIES:
+        pts = place.points[::max(1, len(place.points) // COUNTY_SAMPLES)] + [(place.lat, place.lon)]
+        found = {}
+        for lat, lon in pts:
+            for f in get(f"https://api.weather.gov/zones?type=county&point={lat:.4f},{lon:.4f}", "application/geo+json")["features"]:
+                found[f["properties"]["name"]] = f["properties"]["state"]
+        _COUNTIES[place.name] = found
+    return _COUNTIES[place.name]
+
+
+def burn_note(by_state, listed):
+    """by_state {state: [county]}, listed {state: set of restricted names, or None = no feed}."""
+    hit = sorted(c for st, cs in by_state.items() for c in cs if listed.get(st) and c.lower() in listed[st])
+    clear = sorted(c for st, cs in by_state.items() for c in cs if listed.get(st) is not None and c.lower() not in listed[st])
+    unknown = sorted(st for st in by_state if listed.get(st) is None)
+    names = lambda cs: (" and ".join(cs) if len(cs) < 3 else ", ".join(cs[:-1]) + " and " + cs[-1]) + (" County" if len(cs) == 1 else " Counties")
+    parts = []
+    if hit:
+        parts.append(f"{names(hit)} {'is' if len(hit) == 1 else 'are'} on the state restriction list.")
+    if clear:
+        parts.append(f"No state restriction listed for {names(clear)}.")
+    if unknown:
+        parts.append(f"No {', '.join(unknown)} feed yet, check the state forestry agency.")
+    parts.append("County rules can still apply.")
+    return {"status": "restricted" if hit else "unknown" if unknown and not clear else "none listed", "note": " ".join(parts),
+            "counties": sorted(c for cs in by_state.values() for c in cs)}
+
+
 def pull_burn(place, nws):
-    state, county = nws["state"], nws["county"]
-    site = FIRESPONSE.get(state)
-    if not site:
-        return {"status": "unknown", "note": f"No {state} feed yet, check the state forestry agency."}
-    rows = get(f"https://{site}.firesponse.com/burn-permit/api/burnrestriction/all")
-    hit = any(str(r.get("Name", "")).lower() == county.lower() for r in rows)
-    return {"status": "restricted" if hit else "none listed",
-            "note": f"{county} County is on the state restriction list." if hit else
-                    f"No state restriction listed for {county} County. County rules can still apply."}
+    try:
+        found = counties(place)
+    except Exception as e:  # the zone lookup failing must not hide the burn status: fall back to the center county
+        print(f"county lookup failed: {e}", flush=True)
+        found = {nws["county"]: nws["state"]}
+    by_state = defaultdict(list)
+    for c, st in found.items():
+        by_state[st].append(c)
+    listed = {st: ({str(r.get("Name", "")).lower() for r in get(f"https://{FIRESPONSE[st]}.firesponse.com/burn-permit/api/burnrestriction/all")}
+                   if st in FIRESPONSE else None) for st in by_state}
+    return burn_note(by_state, listed)
 
 
 def wind_grid_points(lat, lon):
