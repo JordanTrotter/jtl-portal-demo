@@ -84,6 +84,7 @@ button.row:hover,button.row:focus-visible{background:var(--line)}
       <div id="loop-bar" style="display:none;margin:2px 0 4px"><div style="display:flex;align-items:center;gap:4px"><input type="range" id="loop-slider" min="0" step="1" style="flex:1"><button id="loop-close" title="Back to live radar" style="border:0;background:none;color:inherit;cursor:pointer;padding:0 2px">&#10005;</button></div><div class="note" id="loop-label"></div></div>
       <label><input type="checkbox" id="lyr-clouds" autocomplete="off"> Clouds (GOES) <span class="note" id="cloud-note"></span></label>
       <label><input type="checkbox" id="lyr-wind" autocomplete="off"> Wind flow <span class="note" id="wind-note"></span></label>
+      <label><input type="checkbox" id="lyr-roads" autocomplete="off"> Roads</label>
       <div class="keys">
         <span><i class="dot" style="background:#ff3b30"></i>Wildfire, or fire on 2 satellite passes</span>
         <span><i class="dot" style="background:#ff2d92"></i>Prescribed fire</span>
@@ -146,8 +147,14 @@ const PROPS = parent.LIVE_CFG.props, P = new URLSearchParams(location.search).ge
 const TRACT = parent.LIVE_CFG.tract;
 const AREA = parent.LIVE_CFG.area, inArea = AREA ? {bounds:AREA} : {};
 
+// road overlay, same as the portal: OpenFreeMap vector tiles (OSM data, ODbL; free, no key, commercial use OK with attribution)
+const RW = (k = 0) => ['interpolate', ['linear'], ['zoom'], 10, ['match', ['get', 'class'], ['motorway', 'trunk', 'primary'], 2 + k, 0.8 + k],
+  16, ['match', ['get', 'class'], ['motorway', 'trunk', 'primary'], 6 + k, ['track', 'service'], 1.5 + k, 3.5 + k]];  // k = casing extra
+const RFILT = ['match', ['get', 'class'], ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'minor', 'service', 'track'], true, false];
 // a big tile cache keeps zoomed-past tiles in memory, so zooming back out is instant
-const map = new maplibregl.Map({container:'map', attributionControl:{compact:true}, maxTileCacheSize:3000, refreshExpiredTiles:false, style:{version:8, sources:{
+const map = new maplibregl.Map({container:'map', attributionControl:{compact:true}, maxTileCacheSize:3000, refreshExpiredTiles:false, style:{version:8,
+  glyphs:'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf', sources:{
+  omt:{type:'vector', url:'https://tiles.openfreemap.org/planet'},
   // public-domain imagery only (Waters, 2026-11-16: Esri's keyless tiles aren't licensed for commercial use)
   sat:{type:'raster', tiles:['https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}'], tileSize:256, maxzoom:16, attribution:'Imagery: USGS'},
   usgs:{type:'raster', tiles:['https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}'], tileSize:256, maxzoom:16, attribution:'Imagery: USGS NAIP'},
@@ -167,6 +174,13 @@ const map = new maplibregl.Map({container:'map', attributionControl:{compact:tru
   {id:'naip', type:'raster', source:'naip', minzoom:11, layout:{visibility:'none'}},
   {id:'recent', type:'raster', source:'recent', minzoom:8, layout:{visibility:'none'}},
   {id:'recent-tract', type:'raster', source:'recent-tract', minzoom:8, layout:{visibility:'none'}},
+  {id:'roads-case', type:'line', source:'omt', 'source-layer':'transportation', filter:RFILT,
+    layout:{visibility:'none', 'line-cap':'round', 'line-join':'round'}, paint:{'line-color':'#1b1b1b', 'line-width':RW(1.5), 'line-opacity':0.7}},
+  {id:'roads', type:'line', source:'omt', 'source-layer':'transportation', filter:RFILT, layout:{visibility:'none', 'line-cap':'round', 'line-join':'round'},
+    paint:{'line-color':['match', ['get', 'class'], ['motorway', 'trunk', 'primary'], '#ffd24a', 'track', '#d9b27a', '#ffffff'], 'line-width':RW()}},
+  {id:'road-names', type:'symbol', source:'omt', 'source-layer':'transportation_name', minzoom:12,
+    layout:{visibility:'none', 'symbol-placement':'line', 'text-field':['coalesce', ['get', 'name_en'], ['get', 'name']], 'text-font':['Noto Sans Regular'], 'text-size':11},
+    paint:{'text-color':'#fff', 'text-halo-color':'#000', 'text-halo-width':1.5}},
   {id:'clouds', type:'raster', source:'clouds', layout:{visibility:'none'}, paint:{'raster-opacity':.85, 'raster-fade-duration':0, 'raster-resampling':'linear'}},
   {id:'radar', type:'raster', source:'radar', paint:{'raster-opacity':.65}},
   {id:'boundary', type:'line', source:'boundary', paint:{'line-color':'#ff1f1f', 'line-width':3}},
@@ -235,8 +249,8 @@ async function prefetchTract() {
   await Promise.all([worker(), worker()]);
 }
 // lightning rides with radar: one toggle shows the storm and its flashes
-const LINKED = {radar:['radar', 'lightning']};
-['fire', 'radar', 'clouds'].forEach(id => $('lyr-' + id).onchange = e => (LINKED[id] || [id]).forEach(l => map.setLayoutProperty(l, 'visibility', e.target.checked ? 'visible' : 'none')));
+const LINKED = {radar:['radar', 'lightning'], roads:['roads-case', 'roads', 'road-names']};
+['fire', 'radar', 'clouds', 'roads'].forEach(id => $('lyr-' + id).onchange = e => (LINKED[id] || [id]).forEach(l => map.setLayoutProperty(l, 'visibility', e.target.checked ? 'visible' : 'none')));
 let mosaic, naipMosaic, lastTick;
 window.liveMap = map;  // the portal syncs its stand map's view with this one
 // sharp imagery first; Sentinel-2 is newer but 10 m, one click away. Inside the portal, the stand map's choice
