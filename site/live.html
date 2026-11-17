@@ -15,10 +15,20 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px/
 #mapwrap{position:relative;height:100%;min-height:320px}
 #map{height:100%}
 #layer-panel{position:absolute;top:10px;right:10px;z-index:900;background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:4px;box-shadow:0 1px 5px rgba(0,0,0,.4);font:13px/1.4 system-ui,sans-serif;padding:8px 10px;width:220px;max-height:calc(100% - 50px);overflow-y:auto}
-#layer-panel label{display:block;margin:3px 0;cursor:pointer}
+#layer-panel label:not(.switch){display:block;margin:3px 0;cursor:pointer}
 #layer-panel .basemaps{border-bottom:1px solid var(--line);margin-bottom:6px;padding-bottom:6px}
 #layer-panel button.base-btn{display:inline-block;margin:2px 4px 2px 0;padding:3px 8px;border:1px solid var(--line);border-radius:3px;background:var(--bg);color:var(--text);cursor:pointer;font-size:12px}
-#layer-panel button.base-btn.active{background:#ff7a00;color:#111;border-color:#ff7a00}
+/* imagery + roads box: keep identical in live-map/index.html and property-portal-demo/portal.html (Waters, 2026-11-17) */
+.imgbox button{display:inline-block;margin:2px 4px 2px 0;padding:3px 8px;border:1px solid var(--line);border-radius:3px;background:var(--bg);color:var(--text);cursor:pointer;font:12px/1.4 system-ui,sans-serif}
+.imgbox button.on{background:#ffe047;color:#14181c;border-color:#ffe047}
+.imgbox button:disabled{opacity:.5;cursor:default}
+.imgbox .switch{display:flex;align-items:center;gap:8px;margin:6px 0 2px;cursor:pointer;font:13px/1.4 system-ui,sans-serif}
+.imgbox .switch input{appearance:none;-webkit-appearance:none;margin:0;width:30px;height:16px;border-radius:8px;background:var(--line);position:relative;cursor:pointer;flex:none;transition:background .15s}
+.imgbox .switch input::after{content:'';position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:var(--text);transition:left .15s}
+.imgbox .switch input:checked{background:#ffe047}
+.imgbox .switch input:checked::after{left:16px;background:#14181c}
+.imgbox .switch input:focus-visible{outline:2px solid var(--text);outline-offset:2px}
+.imgbox .note{color:var(--dim);font-size:11px;margin-top:4px}
 #layer-panel .note{color:var(--dim);font-size:11px;margin-top:4px}
 #layer-panel .keys{font-size:12px;color:var(--dim);margin:6px 0;border-top:1px solid var(--line);padding-top:6px}
 #layer-panel .keys span{display:block}
@@ -73,9 +83,9 @@ button.row:hover,button.row:focus-visible{background:var(--line)}
   <div id="mapwrap">
     <div id="map"></div>
     <div id="layer-panel">
-      <div class="basemaps">
-        <button class="base-btn active" data-base="naip" id="naip-label">NAIP</button>
-        <button class="base-btn" data-base="recent" id="s2-label">Sentinel-2</button>
+      <div class="basemaps imgbox">
+        <button class="on" data-base="naip" id="naip-label">NAIP</button><button data-base="recent" id="s2-label">Sentinel-2</button>
+        <label class="switch"><input type="checkbox" id="lyr-roads" autocomplete="off"> Roads</label>
         <div class="note" id="base-note"></div>
       </div>
       <b>Live</b>
@@ -83,9 +93,7 @@ button.row:hover,button.row:focus-visible{background:var(--line)}
       <div style="display:flex;align-items:center;gap:6px"><label><input type="checkbox" id="lyr-radar" checked autocomplete="off"> Radar</label><span id="radar-age" class="sub"></span><button id="loop" title="Play radar loop" style="border:0;background:none;color:inherit;cursor:pointer;padding:0 2px;font-size:13px;line-height:1">&#9654;</button></div>
       <div id="loop-bar" style="display:none;margin:2px 0 4px"><div style="display:flex;align-items:center;gap:4px"><input type="range" id="loop-slider" min="0" step="1" style="flex:1"><button id="loop-close" title="Back to live radar" style="border:0;background:none;color:inherit;cursor:pointer;padding:0 2px">&#10005;</button></div><div class="note" id="loop-label"></div></div>
       <label><input type="checkbox" id="lyr-clouds" autocomplete="off"> Clouds (GOES) <span class="note" id="cloud-note"></span></label>
-      <label><input type="checkbox" id="lyr-wind" autocomplete="off"> Wind flow <span class="note" id="wind-note"></span></label>
-      <label><input type="checkbox" id="lyr-roads" autocomplete="off"> Roads</label>
-      <div class="keys">
+      <label><input type="checkbox" id="lyr-wind" autocomplete="off"> Wind flow <span class="note" id="wind-note"></span></label>      <div class="keys">
         <span><i class="dot" style="background:#ff3b30"></i>Wildfire, or fire on 2 satellite passes</span>
         <span><i class="dot" style="background:#ff2d92"></i>Prescribed fire</span>
         <span><i class="dot" style="background:#ff9f0a"></i>Reported burn</span>
@@ -260,7 +268,7 @@ function setBase() {
   ['recent', 'recent-tract'].forEach(id => map.setLayoutProperty(id, 'visibility', b === 'recent' ? 'visible' : 'none'));
   map.setLayoutProperty('naip', 'visibility', b === 'naip' ? 'visible' : 'none');
   map.setLayoutProperty('sat', 'visibility', b === 'sat' ? 'visible' : 'none');  // USGS fills below z11 / z8
-  document.querySelectorAll('[data-base]').forEach(x => x.classList.toggle('active', x.dataset.base === (b === 'sat' ? 'naip' : b)));  // USGS (NAIP-based) shows under the NAIP button
+  document.querySelectorAll('[data-base]').forEach(x => x.classList.toggle('on', x.dataset.base === (b === 'sat' ? 'naip' : b)));  // USGS (NAIP-based) shows under the NAIP button
 }
 document.querySelectorAll('[data-base]').forEach(b => b.onclick = () => { base = b.dataset.base; setBase(); });
 window.liveBase = v => { if (v) { base = v; setBase(); } return base; };  // the portal reads and sets it on tab switches
