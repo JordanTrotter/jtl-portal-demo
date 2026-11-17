@@ -1329,8 +1329,10 @@ def level(data, errors):
     for name in ("Warning", "Watch"):
         if why[name]:
             return name, why[name]
-    missing = [f"No {k} data" for k in ("nws", "fires") if k in errors]
-    missing += [f"No {k} data" for k in (data.get("fires") or {}).get("failed", [])]
+    # plain words for partners: a dead feed means "can't tell", not an alarm (Waters, 2026-11-17)
+    feed = {"nws": "Weather service not responding, alerts unknown", "fires": "Fire feeds not responding, nearby fires unknown"}
+    missing = [feed[k] for k in ("nws", "fires") if k in errors]
+    missing += [f"{k} not responding, its fire detections unknown" for k in (data.get("fires") or {}).get("failed", [])]
     if missing:
         return "Unknown", missing
     return "Clear", []

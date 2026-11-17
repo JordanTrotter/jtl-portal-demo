@@ -514,12 +514,12 @@ async function refresh(force) {
   try { s = await (await fetch('/api/status' + (Q || '?') + (force === true ? '&fresh=1' : ''))).json(); }
   catch { $('status').className = 'Unknown'; $('status').textContent = 'Map server not responding'; return; }
   const n = s.data.nws, bad = k => s.errors.includes(k);
-  document.title = `${s.level}: ${s.name}`;
+  document.title = `${s.level === 'Unknown' ? 'Some data unavailable' : s.level}: ${s.name}`;
   $('updated').textContent = 'Updated ' + new Date(s.now * 1000).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
   $('name').textContent = s.name;
   if (n) $('where').textContent = `${n.county} County, ${n.state}, near ${n.near}`;
   $('status').className = s.level;
-  $('status').innerHTML = `${s.level}<small>${s.why.length ? s.why.map(esc).join(', ') : 'No active alerts or nearby wildfires'}</small>`;
+  $('status').innerHTML = `${s.level === 'Unknown' ? 'Some data unavailable' : s.level}<small>${s.why.length ? s.why.map(esc).join(', ') : 'No active alerts or nearby wildfires'}</small>`;
   ['nws','fires','burn','storms','raws','lightning','fire_class','climate'].forEach(k => stamp('t-' + k, s.fetched[k], s.now, bad(k)));
 
   if (n) {
