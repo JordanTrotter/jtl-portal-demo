@@ -107,8 +107,9 @@ const clock = s => { const d = new Date(s), time = {hour:'numeric', minute:'2-di
   return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString([], time) : d.toLocaleString([], {month:'short', day:'numeric', ...time}); };
 const facts = pairs => pairs.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
 // NOAA MRMS quality-controlled base reflectivity: every radar merged, clutter, birds and false echoes removed, 2 min steps,
-// about 1 km. Public domain, no key. The service keeps about 2 hours, so the loop's past frames ask for a TIME.
-const MRMS = 'https://opengeo.ncep.noaa.gov/geoserver/conus/conus_bref_qcd/ows?service=WMS&version=1.3.0&request=GetMap&layers=conus_bref_qcd&styles=&format=image/png&transparent=true&crs=EPSG:3857';
+// about 1 km. Public domain, no key. The loop's past frames ask for a TIME (nearest frame, about 4 min steps, ~7 h kept).
+// Served by NOAA nowCOAST since 2026-11-17: opengeo.ncep.noaa.gov's GetMap returned 503 on every tile.
+const MRMS = 'https://nowcoast.noaa.gov/geoserver/observations/weather_radar/ows?service=WMS&version=1.3.0&request=GetMap&layers=base_reflectivity_mosaic&styles=&format=image/png&transparent=true&crs=EPSG:3857';
 const RADAR = MRMS + '&width=256&height=256&bbox={bbox-epsg-3857}';
 const radarTime = (now, m) => new Date(now - m * 60000).toISOString().slice(0, 19) + 'Z';
 
