@@ -272,6 +272,12 @@ function setBase() {
 }
 document.querySelectorAll('[data-base]').forEach(b => b.onclick = () => { base = b.dataset.base; setBase(); });
 window.liveBase = v => { if (v) { base = v; setBase(); } return base; };  // the portal reads and sets it on tab switches
+// roads ride along the same way (Waters, 2026-11-17: Live mirrors the stand map's imagery, view and roads)
+window.liveRoads = v => { const box = $('lyr-roads');
+  if (v !== undefined && v !== box.checked) { box.checked = v; const go = () => box.onchange({target:box});
+    try { go(); } catch { map.once('load', go); } }  // before the style loads, apply on load
+  return box.checked; };
+if (window !== parent && parent.portalRoads) liveRoads(parent.portalRoads());
 // NAIP goes on only if one of its tiles at the map center loads: its mosaic ids expire 24 h after they are made and an
 // expired one 404s every tile, which left a blank map (2026-11-13). Until then USGS shows.
 let naipTried;
