@@ -74,8 +74,7 @@ button.row:hover,button.row:focus-visible{background:var(--line)}
     <div id="map"></div>
     <div id="layer-panel">
       <div class="basemaps">
-        <button class="base-btn active" data-base="sat" id="usgs-label">USGS</button>
-        <button class="base-btn" data-base="naip" id="naip-label">NAIP</button>
+        <button class="base-btn active" data-base="naip" id="naip-label">NAIP</button>
         <button class="base-btn" data-base="recent" id="s2-label">Sentinel-2</button>
         <div class="note" id="base-note"></div>
       </div>
@@ -246,7 +245,7 @@ function setBase() {
   ['recent', 'recent-tract'].forEach(id => map.setLayoutProperty(id, 'visibility', b === 'recent' ? 'visible' : 'none'));
   map.setLayoutProperty('naip', 'visibility', b === 'naip' ? 'visible' : 'none');
   map.setLayoutProperty('sat', 'visibility', b === 'sat' ? 'visible' : 'none');  // USGS fills below z11 / z8
-  document.querySelectorAll('[data-base]').forEach(x => x.classList.toggle('active', x.dataset.base === b));
+  document.querySelectorAll('[data-base]').forEach(x => x.classList.toggle('active', x.dataset.base === (b === 'sat' ? 'naip' : b)));  // USGS (NAIP-based) shows under the NAIP button
 }
 document.querySelectorAll('[data-base]').forEach(b => b.onclick = () => { base = b.dataset.base; setBase(); });
 window.liveBase = v => { if (v) { base = v; setBase(); } return base; };  // the portal reads and sets it on tab switches
@@ -579,7 +578,7 @@ async function refresh(force) {
     const id = naipTried = bm.naip.mosaic;
     tileOk(naipTile(id)).then(ok => { if (ok) { naipMosaic = id; map.getSource('naip').setTiles([naipTile(id)]); setBase(); } });
   }
-  $('base-note').textContent = img ? `Newest clear image on tract: ${img.coverage.map(c => c.date === 'none' ? `${c.pct}% no image` : `${short(c.date)} ${c.pct}%`).join(', ')}.` : 'Sentinel-2 unavailable, showing USGS.';
+  $('base-note').textContent = img ? `Newest clear image on tract: ${img.coverage.map(c => c.date === 'none' ? `${c.pct}% no image` : `${short(c.date)} ${c.pct}%`).join(', ')}.` : 'Sentinel-2 unavailable, showing NAIP.';
   if (s.data.fires?.failed?.length) $('fires').innerHTML += `<div class="sub" style="color:var(--watch)">Missing: ${esc(s.data.fires.failed.join(', '))}</div>`;
   $('burn').textContent = s.data.burn ? s.data.burn.note : 'Unavailable, check the state forestry agency.';
   const cl = s.data.climate || {}, r = cl.rain, dr = cl.drought;
