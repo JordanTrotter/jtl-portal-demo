@@ -1301,7 +1301,7 @@ def level(data, errors):
         elif live and f["miles"] <= 15:
             why["Watch"].append(f"Wildfire {f['miles']} mi {f['dir']}")
         elif f["kind"] == "heat" and f.get("active", True):  # long-running and not-seen-again heat raise nothing
-            what = "Likely lightning fire" if f.get("lightning") else "Fire seen on 2 satellite passes"
+            what = "Heat detected after lightning strike" if f.get("lightning") else "Heat detected, 2 satellite passes"
             # a confirmed spot can still be a permitted burn GA does not publish, so far heat stays a Watch;
             # only heat near the line, or heat that followed a strike, is a Warning
             if f.get("confirmed") and (f["miles"] <= HEAT_WARNING_MI or (f.get("lightning") and f["miles"] <= 5)):
@@ -1309,7 +1309,7 @@ def level(data, errors):
             elif f.get("confirmed") and f["miles"] <= 15:
                 why["Watch"].append(f"{what} {f['miles']} mi {f['dir']}")
             elif f["miles"] <= 5:
-                why["Watch"].append(f"Possible fire, 1 pass, {f['miles']} mi {f['dir']}")
+                why["Watch"].append(f"Heat detected, 1 satellite pass, {f['miles']} mi {f['dir']}")
     for s in (data.get("storms") or {}).get("items", []):
         if s["miles"] <= STORM_RADIUS_MI:
             why["Watch"].append(f"{s['name']} {s['miles']:.0f} mi {s['dir']}")
