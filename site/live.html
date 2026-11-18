@@ -578,7 +578,7 @@ async function refresh(force) {
   const fcDate = d => new Date(d + 'T12:00:00').toLocaleDateString([], {month:'short', day:'numeric'});
   // property fire risk: the highest of the USFS class, rain deficit and drought at the property, and the NWS point
   // forecast's humidity and gusts (live_map.property_fire); every source that counted is listed under the badge
-  const pf = s.data.property_fire, tomDate = new Date(Date.now() + 864e5).toLocaleDateString('en-CA');
+  const pf = s.data.property_fire;
   const day = (label, r) => `<div style="margin:8px 0 2px"><b>${label}</b></div><div class="badge ${r.rating.replace(' ', '')}">${r.rating}</div><div>${plain[r.rating]}</div>` +
     `<div class="sub">${r.drivers.map((d, i) => `${i ? '' : '<b>'}${esc(d.why)}: ${esc(d.rating)}${i ? '' : '</b>'}`).join('<br>')}</div>`;
   // ponytail: today only (Waters, 2026-11-18); live_map.property_fire still computes tomorrow if it comes back
