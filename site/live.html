@@ -581,7 +581,8 @@ async function refresh(force) {
   const pf = s.data.property_fire, tomDate = new Date(Date.now() + 864e5).toLocaleDateString('en-CA');
   const day = (label, r) => `<div style="margin:8px 0 2px"><b>${label}</b></div><div class="badge ${r.rating.replace(' ', '')}">${r.rating}</div><div>${plain[r.rating]}</div>` +
     `<div class="sub">${r.drivers.map((d, i) => `${i ? '' : '<b>'}${esc(d.why)}: ${esc(d.rating)}${i ? '' : '</b>'}`).join('<br>')}</div>`;
-  $('danger').innerHTML = pf ? (pf.today ? day('Today', pf.today) : '') + (pf.tomorrow ? day('Tomorrow, ' + fcDate(tomDate), pf.tomorrow) : '') +
+  // ponytail: today only (Waters, 2026-11-18); live_map.property_fire still computes tomorrow if it comes back
+  $('danger').innerHTML = pf && pf.today ? day('Today', pf.today) +
     '<div class="sub" style="margin-top:4px">Rated at the property: the highest of the Forest Service class, rain against normal, drought, and the forecast humidity and wind. Check local signs and bans before burning.</div>'
     : '<div class="none">Fire danger unavailable</div>';
   const c = s.data.current;
