@@ -433,29 +433,6 @@ map.on('click', 'fire', e => { const p = e.features[0].properties; pin(e.feature
 map.on('mouseenter', 'fire', () => map.getCanvas().style.cursor = 'pointer');
 map.on('contextmenu', e => pin(e.lngLat, 'Coordinates', ''));
 
-// Click anywhere for rain at that spot: NWS precipitation analysis (radar plus gauges), public domain, no key.
-// Image layers 28, 40, 56 = last 1, 3, 7 days; 227 = last 30 days as % of normal (so a dry spell reads as dry, not broken).
-const QPE = 'https://mapservices.weather.noaa.gov/raster/rest/services/obs/rfc_qpe/MapServer/identify?geometryType=esriGeometryPoint&sr=4326&layers=all:28,40,56,227&tolerance=1&imageDisplay=400,400,96&returnGeometry=false&f=json';
-const QPE_SPAN = {28:'1 day', 40:'3 days', 56:'1 week'};
-map.on('click', async e => {
-  if (map.queryRenderedFeatures(e.point, {layers:['fire']}).length) return;
-  const {lat, lng} = e.lngLat;
-  pin(e.lngLat, 'Rain', 'Loading...');
-  let w;
-  const x = lng.toFixed(3), y = lat.toFixed(3);
-  try { w = await (await fetch(`${QPE}&geometry=${x},${y}&mapExtent=${x - 1},${y - 1},${+x + 1},${+y + 1}`)).json(); } catch {}
-  if (!w?.results) return pin(e.lngLat, 'Rain', 'Unavailable');
-  const val = {};
-  w.results.forEach(r => { const v = parseFloat(r.attributes['Service Pixel Value']); val[r.layerId] = isNaN(v) ? 'No data' : r.layerId === 227 ? Math.round(v) + '% of normal' : Math.max(v, 0).toFixed(2) + ' in'; });  // NOAA writes -10000 where no rain fell
-  const past = id => val[id] || 'No data';
-  popup?.remove();
-  popup = new maplibregl.Popup().setLngLat(e.lngLat).setHTML(`<div style="color:#111"><b>Rain</b> <select class="rain-span" style="font-size:12px">` +
-    Object.entries(QPE_SPAN).map(([id, t]) => `<option value="${id}">${t}</option>`).join('') + '</select>' +
-    `<div class="rain-val" style="font-size:16px;font-weight:600;margin-top:4px">${past(28)}</div><div style="font-size:12px;margin-top:2px">Last 30 days: ${past(227)}</div></div>`).addTo(map);
-  const el = popup.getElement();
-  el.querySelector('.rain-span').onchange = ev => el.querySelector('.rain-val').textContent = past(+ev.target.value);
-});
-
 // --- wind flow: particles drift with the current 10 m wind grid from the server
 let wind;
 function windAt(lng, lat) {
